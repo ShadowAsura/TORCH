@@ -46,6 +46,18 @@ class WorkerSettings:
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be a finite positive number")
 
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> "WorkerSettings":
+        env = os.environ if environ is None else environ
+        return cls(
+            worker_id=env.get("WORKER_ID", "worker-1"),
+            gpu_type=env.get("GPU_TYPE", "L40"),
+            gpu_count=int(env.get("GPU_COUNT", "2")),
+            gpu_vram_gb=float(env.get("GPU_VRAM_GB", "48")),
+            gpu_performance=float(env.get("GPU_PERFORMANCE", "1")),
+            sim_seconds_per_work_unit=float(env.get("SIM_SECONDS_PER_WORK_UNIT", "1")),
+            reservation_lease_seconds=float(env.get("RESERVATION_LEASE_SECONDS", "30")),
+        )
 
 
 
