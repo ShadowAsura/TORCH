@@ -28,6 +28,9 @@ def create_app(settings: WorkerSettings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "worker_id": worker.settings.worker_id}
 
+    @app.get("/resources")
+    async def resources() -> dict:
+        return await worker.resources()
 
 
 

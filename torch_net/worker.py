@@ -92,5 +92,17 @@ class Worker:
 
 
 
+    async def resources(self) -> dict:
+        async with self._lock:
+            self._expire_locked(perf_counter())
+            return {
+                "worker_id": self.settings.worker_id,
+                "gpu_type": self.settings.gpu_type,
+                "gpu_count": self.settings.gpu_count,
+                "free_gpus": self.settings.gpu_count - self._allocated_gpus,
+                "performance": self.settings.gpu_performance,
+                "allocated_gpus": self._allocated_gpus,
+                "active_jobs": sum(job.allocated for job in self._jobs.values()),
+            }
 
 
