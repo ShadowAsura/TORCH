@@ -5,6 +5,7 @@ release GPUs use the same asyncio lock; remote schedulers cannot overbook it.
 """
 
 import asyncio
+import logging
 import math
 import os
 from collections.abc import Mapping
@@ -14,6 +15,7 @@ from uuid import uuid4
 
 from .models import JobRequest, JobState, JobStatus
 
+log = logging.getLogger(__name__)
 
 
 
