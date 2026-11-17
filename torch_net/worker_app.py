@@ -24,6 +24,9 @@ def create_app(settings: WorkerSettings | None = None) -> FastAPI:
     app = FastAPI(title="TORCH Worker", lifespan=lifespan)
     app.state.worker = worker
 
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok", "worker_id": worker.settings.worker_id}
 
 
 
