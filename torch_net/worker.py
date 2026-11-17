@@ -100,6 +100,9 @@ class Worker:
                 "gpu_type": self.settings.gpu_type,
                 "gpu_count": self.settings.gpu_count,
                 "free_gpus": self.settings.gpu_count - self._allocated_gpus,
+                "gpu_vram_gb": self.settings.gpu_vram_gb,
+                "available_vram_gb": (self.settings.gpu_count - self._allocated_gpus)
+                * self.settings.gpu_vram_gb,
                 "performance": self.settings.gpu_performance,
                 "allocated_gpus": self._allocated_gpus,
                 "active_jobs": sum(job.allocated for job in self._jobs.values()),
