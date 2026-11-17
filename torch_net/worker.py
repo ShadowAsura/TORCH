@@ -64,3 +64,33 @@ class WorkerSettings:
 
 
 
+class Worker:
+    def __init__(self, settings: WorkerSettings):
+        self.settings = settings
+        self._lock = asyncio.Lock()
+        self._jobs: dict[str, _JobRecord] = {}
+        self._allocated_gpus = 0
+        self._closed = False
+        self._created_at = perf_counter()
+        self._busy_gpu_seconds = 0.0
+        self._counters = {
+            "reservation_attempts": 0,
+            "reservations_granted": 0,
+            "reservation_conflicts": 0,
+            "reservation_duplicates": 0,
+            "reservations_expired": 0,
+            "jobs_started": 0,
+            "jobs_completed": 0,
+            "jobs_failed": 0,
+        }
+
+
+
+
+
+
+
+
+
+
+
