@@ -115,6 +115,15 @@ class Worker:
         async with self._lock:
             self._counters["reservation_attempts"] += 1
             self._expire_locked(perf_counter())
+            existing = self._jobs.get(request.job_id)
+            if existing is not None:
+                if existing.request != request:
+                    self._counters["reservation_conflicts"] += 1
+                    raise ReservationConflict(
+                        "job_id_already_used_with_different_request"
+                    )
+                self._counters["reservation_duplicates"] += 1
+                return self._snapshot(existing), False
 
             if (
                 self.settings.gpu_type not in request.compatible_gpu_types
