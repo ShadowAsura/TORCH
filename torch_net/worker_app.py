@@ -41,7 +41,21 @@ def create_app(settings: WorkerSettings | None = None) -> FastAPI:
         response.status_code = 201 if created else 200
         return job
 
+    @app.post("/jobs/{job_id}/start", response_model=JobStatus)
+    async def start_job(job_id: str) -> JobStatus:
+        try:
+            return await worker.start(job_id)
+        except JobNotFound as exc:
+            raise HTTPException(status_code=404, detail="job_not_found") from exc
+        except ReservationConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    @app.get("/jobs/{job_id}", response_model=JobStatus)
+    async def get_job(job_id: str) -> JobStatus:
+        try:
+            return await worker.get_job(job_id)
+        except JobNotFound as exc:
+            raise HTTPException(status_code=404, detail="job_not_found") from exc
 
 
     return app

@@ -22,8 +22,14 @@ class ReservationConflict(Exception):
     """The worker cannot safely grant or start a requested reservation."""
 
 
+class JobNotFound(Exception):
+    """No reservation exists for this job ID on this worker."""
 
 
+async def _wait_until(deadline: float) -> None:
+    """Guard against asyncio timers waking early on coarse Windows clocks."""
+    while (remaining := deadline - perf_counter()) > 0:
+        await asyncio.sleep(max(remaining, 0.001))
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,8 +170,62 @@ class Worker:
             )
             return self._snapshot(record), True
 
+    async def start(self, job_id: str) -> JobStatus:
+        async with self._lock:
+            self._expire_locked(perf_counter())
+            record = self._jobs.get(job_id)
+            if record is None:
+                raise JobNotFound(job_id)
+            if record.state == "failed":
+                raise ReservationConflict(record.error or "job_failed")
+            if record.state == "reserved":
+                record.state = "running"
+                record.started_at = perf_counter()
+                if record.lease_task is not None:
+                    record.lease_task.cancel()
+                self._counters["jobs_started"] += 1
+                record.execution_task = asyncio.create_task(self._execute(record))
+            return self._snapshot(record)
 
+    async def _execute(self, record: _JobRecord) -> None:
+        """Release GPUs once on success, failure or cancellation."""
+        error: str | None = None
+        try:
+            delay = (
+                record.request.work_units
+                / self.settings.gpu_performance
+                * self.settings.sim_seconds_per_work_unit
+            )
+            assert record.started_at is not None
+            await _wait_until(record.started_at + delay)
+        except asyncio.CancelledError:
+            error = "execution_cancelled"
+        finally:
+            async with self._lock:
+                if record.state == "running":
+                    assert record.started_at is not None
+                    self._busy_gpu_seconds += record.request.gpu_count * (
+                        perf_counter() - record.started_at
+                    )
+                    if error is None:
+                        record.state = "completed"
+                        log.debug(
+                            "Completed %s on %s",
+                            record.request.job_id,
+                            self.settings.worker_id,
+                        )
+                    else:
+                        record.state = "failed"
+                        record.error = error
+                    self._release_locked(record)
 
+    async def get_job(self, job_id: str) -> JobStatus:
+        async with self._lock:
+            self._expire_locked(perf_counter())
+            record = self._jobs.get(job_id)
+            if record is None:
+                raise JobNotFound(job_id)
+            return self._snapshot(record)
 
     async def resources(self) -> dict:
         async with self._lock:
