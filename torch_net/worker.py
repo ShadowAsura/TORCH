@@ -116,6 +116,26 @@ class Worker:
             self._counters["reservation_attempts"] += 1
             self._expire_locked(perf_counter())
 
+            if (
+                self.settings.gpu_type not in request.compatible_gpu_types
+                and request.compatible_gpu_types
+            ):
+                error = "incompatible_gpu_type"
+            elif request.vram_gb > self.settings.gpu_vram_gb:
+                error = "insufficient_gpu_vram"
+            elif request.gpu_count > self.settings.gpu_count - self._allocated_gpus:
+                error = "insufficient_free_gpus"
+            elif not math.isfinite(
+                request.work_units
+                / self.settings.gpu_performance
+                * self.settings.sim_seconds_per_work_unit
+            ):
+                error = "invalid_simulated_duration"
+            else:
+                error = None
+            if error is not None:
+                self._counters["reservation_conflicts"] += 1
+                raise ReservationConflict(error)
 
             record = _JobRecord(
                 request=request.model_copy(deep=True),
