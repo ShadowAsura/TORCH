@@ -33,6 +33,17 @@ class SchedulerSettings:
     max_monitor_errors: int = 5
 
 
+    def validate(self) -> None:
+        if not self.workers or len({worker.name for worker in self.workers}) != len(
+            self.workers
+        ):
+            raise SchedulingConfigurationError(
+                "workers must be nonempty with unique names"
+            )
+        if min(self.retry_delay_seconds, self.timeout_seconds, self.poll_seconds) <= 0:
+            raise SchedulingConfigurationError(
+                "timeouts and retry delays must be positive"
+            )
 
 
 @dataclass
@@ -89,6 +100,13 @@ class Scheduler:
         self._reservation_rejections = 0
         self._worker_errors = 0
 
+    async def close(self) -> None:
+        if self._tasks:
+            for task in self._tasks:
+                task.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        if self._owns_client:
+            await self.client.aclose()
 
     def _create_task(self, coroutine) -> None:
         task = asyncio.create_task(coroutine)
@@ -107,7 +125,32 @@ class Scheduler:
 
 
 
+    async def _query(self, endpoint: WorkerEndpoint, record: JobRecord):
+        try:
+            response = await self.client.get(f"{endpoint.url}/resources")
+            return endpoint, response.json()
+        except (httpx.HTTPError, ValueError):
+            return None
 
+    async def _reserve(self, endpoint: WorkerEndpoint, record: JobRecord) -> str:
+        request_body = record.request.model_dump(exclude={"policy"})
+        try:
+            response = await self.client.post(
+                f"{endpoint.url}/reservations",
+                json=request_body,
+            )
+            if response.status_code in (200, 201):
+                reservation_id = response.json().get("reservation_id")
+                if not reservation_id:
+                    # The resource may now be reserved even if the reply is invalid.
+                    return "uncertain"
+                record.reservation_id = reservation_id
+                return "granted"
+            self._worker_errors += 1
+            return "uncertain"
+        except (httpx.HTTPError, ValueError):
+            self._worker_errors += 1
+            return "uncertain"
 
 
 
