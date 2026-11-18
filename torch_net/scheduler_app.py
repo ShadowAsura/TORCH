@@ -39,8 +39,10 @@ def create_app(
         }
 
 
-
-
+    @app.post("/jobs")
+    async def submit_job(job: SchedulingRequest):
+        record, created = await scheduler.submit(job)
+        return JSONResponse(status_code=202 if created else 200, content=record)
 
     return app
 
