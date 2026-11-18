@@ -32,6 +32,14 @@ def create_app(settings: WorkerSettings | None = None) -> FastAPI:
     async def resources() -> dict:
         return await worker.resources()
 
+    @app.post("/reservations", response_model=JobStatus, status_code=201)
+    async def reserve(request: JobRequest, response: Response) -> JobStatus:
+        try:
+            job, created = await worker.reserve(request)
+        except ReservationConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        response.status_code = 201 if created else 200
+        return job
 
 
 

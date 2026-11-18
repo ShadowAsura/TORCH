@@ -18,6 +18,8 @@ from .models import JobRequest, JobState, JobStatus
 log = logging.getLogger(__name__)
 
 
+class ReservationConflict(Exception):
+    """The worker cannot safely grant or start a requested reservation."""
 
 
 
@@ -62,6 +64,17 @@ class WorkerSettings:
         )
 
 
+@dataclass(slots=True)
+class _JobRecord:
+    request: JobRequest
+    reservation_id: str
+    reserved_at: float
+    state: JobState = "reserved"
+    error: str | None = None
+    started_at: float | None = None
+    allocated: bool = True
+    lease_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    execution_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
 
 class Worker:
@@ -84,10 +97,43 @@ class Worker:
             "jobs_failed": 0,
         }
 
+    def _snapshot(self, record: _JobRecord) -> JobStatus:
+        return JobStatus(
+            job_id=record.request.job_id,
+            worker_id=self.settings.worker_id,
+            reservation_id=record.reservation_id,
+            state=record.state,
+            gpu_count=record.request.gpu_count,
+            error=record.error,
+        )
 
 
 
 
+    async def reserve(self, request: JobRequest) -> tuple[JobStatus, bool]:
+        """Allocate GPUs once; same-ID same-payload retries return the first result."""
+        async with self._lock:
+            self._counters["reservation_attempts"] += 1
+            self._expire_locked(perf_counter())
+
+
+            record = _JobRecord(
+                request=request.model_copy(deep=True),
+                reservation_id=str(uuid4()),
+                reserved_at=perf_counter(),
+            )
+            self._jobs[request.job_id] = record
+            self._allocated_gpus += request.gpu_count
+            self._counters["reservations_granted"] += 1
+            log.debug("Reserved %s on %s", request.job_id, self.settings.worker_id)
+            record.lease_task = asyncio.create_task(
+                self._lease_timeout(
+                    request.job_id,
+                    record.reservation_id,
+                    record.reserved_at + self.settings.reservation_lease_seconds,
+                )
+            )
+            return self._snapshot(record), True
 
 
 
