@@ -113,8 +113,39 @@ class Worker:
             error=record.error,
         )
 
+    def _release_locked(self, record: _JobRecord) -> None:
+        if record.allocated:
+            self._allocated_gpus -= record.request.gpu_count
+            record.allocated = False
 
+    def _expire_locked(self, now: float) -> None:
+        for record in self._jobs.values():
+            if (
+                record.state == "reserved"
+                and now - record.reserved_at >= self.settings.reservation_lease_seconds
+            ):
+                record.state = "failed"
+                record.error = "reservation_expired"
+                self._release_locked(record)
+                self._counters["reservations_expired"] += 1
+                self._counters["jobs_failed"] += 1
+                if (
+                    record.lease_task is not asyncio.current_task()
+                    and record.lease_task is not None
+                ):
+                    record.lease_task.cancel()
 
+    async def _lease_timeout(
+        self, job_id: str, reservation_id: str, deadline: float
+    ) -> None:
+        try:
+            await _wait_until(deadline)
+            async with self._lock:
+                record = self._jobs.get(job_id)
+                if record is not None and record.reservation_id == reservation_id:
+                    self._expire_locked(perf_counter())
+        except asyncio.CancelledError:
+            return
 
     async def reserve(self, request: JobRequest) -> tuple[JobStatus, bool]:
         """Allocate GPUs once; same-ID same-payload retries return the first result."""
@@ -244,3 +275,18 @@ class Worker:
             }
 
 
+    async def close(self) -> None:
+        """Stop outstanding tasks and account for interrupted runs on shutdown."""
+        async with self._lock:
+            self._closed = True
+            now = perf_counter()
+            tasks = [
+                task
+                for record in self._jobs.values()
+                for task in (record.lease_task, record.execution_task)
+                if task is not None and not task.done()
+            ]
+            for task in tasks:
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
