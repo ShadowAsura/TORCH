@@ -271,6 +271,13 @@ class Scheduler:
                     return
                 # Static incompatibility is known only when all configured
                 # workers have replied, not when a sampled subset has replied.
+                all_replied = len(snapshots) == len(self.settings.workers)
+                if all_replied and not any(
+                    self._could_fit(snapshot, record.request)
+                    for _, snapshot in snapshots
+                ):
+                    record.reason = "no worker has compatible GPU capacity"
+                    break
             record.state = "failed"
             record.reason = record.reason or "no capacity after bounded retries"
             record.scheduling_latency_ms = round(
