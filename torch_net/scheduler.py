@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from torch_net.models import JobRequest
-from torch_net.policies import POLICIES, WorkerEndpoint
+from torch_net.policies import POLICIES, WorkerEndpoint, choose_workers, rank_compatible
 
 
 class SchedulingRequest(JobRequest):
@@ -248,7 +248,14 @@ class Scheduler:
         try:
             for attempt in range(self.settings.max_retries + 1):
                 record.attempts += 1
-                chosen = list(self.settings.workers)
+                chosen = choose_workers(
+                    record.policy,
+                    self.settings.workers,
+                    sample_size=self.settings.sample_size,
+                    seed=self.settings.seed,
+                    job_id=record.request.job_id,
+                    attempt=attempt,
+                )
                 replies = await asyncio.gather(
                     *(self._query(e, record) for e in chosen)
                 )

@@ -42,6 +42,22 @@ POLICIES: dict[str, DiscoveryPolicy] = {
 }
 
 
+def choose_workers(
+    policy: str,
+    workers: Sequence[WorkerEndpoint],
+    *,
+    sample_size: int,
+    seed: int,
+    job_id: str,
+    attempt: int,
+) -> list[WorkerEndpoint]:
+    return POLICIES[policy].select(
+        workers,
+        sample_size=sample_size,
+        seed=seed,
+        job_id=job_id,
+        attempt=attempt,
+    )
 
 
 
