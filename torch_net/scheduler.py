@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from torch_net.models import JobRequest
-from torch_net.policies import POLICIES, WorkerEndpoint, choose_workers, rank_compatible
+from torch_net.policies import POLICIES, WorkerEndpoint
 
 
 class SchedulingRequest(JobRequest):
@@ -244,4 +244,45 @@ class Scheduler:
                     record.state = "failed"
                     return
 
+    async def _run(self, record: JobRecord) -> None:
+        try:
+            for attempt in range(self.settings.max_retries + 1):
+                record.attempts += 1
+                chosen = list(self.settings.workers)
+                replies = await asyncio.gather(
+                    *(self._query(e, record) for e in chosen)
+                )
+                snapshots = [reply for reply in replies if reply is not None]
+                candidates = sorted(
+                    ((e, s) for e, s in snapshots if
+                     int(s["free_gpus"]) >= record.request.gpu_count
+                     and float(s["gpu_vram_gb"]) >= record.request.vram_gb
+                     and (not record.request.compatible_gpu_types
+                          or s["gpu_type"] in record.request.compatible_gpu_types)),
+                    key=lambda pair: -float(pair[1]["performance"]),
+                )
+                for endpoint, _ in candidates:
+                    result = await self._reserve(endpoint, record)
+                    if result == "rejected":
+                        continue
+                    if result == "uncertain":
+                        await self._reconcile(endpoint, record)
+                    await self._start_and_monitor(endpoint, record)
+                    return
+                # Static incompatibility is known only when all configured
+                # workers have replied, not when a sampled subset has replied.
+            record.state = "failed"
+            record.reason = record.reason or "no capacity after bounded retries"
+            record.scheduling_latency_ms = round(
+                (time.perf_counter() - record.accepted_at) * 1000, 3
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - task boundary records failures
+            record.state = "failed"
+            record.reason = str(exc)
+            if record.scheduling_latency_ms is None:
+                record.scheduling_latency_ms = round(
+                    (time.perf_counter() - record.accepted_at) * 1000, 3
+                )
 

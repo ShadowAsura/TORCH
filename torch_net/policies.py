@@ -16,10 +16,18 @@ class WorkerEndpoint:
 
 
 
+class Centralized:
+    name = "centralized"
+
+    def select(self, workers, *, sample_size, seed, job_id, attempt):
+        return list(workers)
 
 
 
 
+POLICIES = {
+    "centralized": Centralized(),
+}
 
 
 
