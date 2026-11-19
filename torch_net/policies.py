@@ -14,6 +14,18 @@ class WorkerEndpoint:
     url: str
 
 
+class DiscoveryPolicy(Protocol):
+    name: str
+
+    def select(
+        self,
+        workers: Sequence[WorkerEndpoint],
+        *,
+        sample_size: int,
+        seed: int,
+        job_id: str,
+        attempt: int,
+    ) -> list[WorkerEndpoint]: ...
 
 
 class Centralized:
@@ -25,7 +37,7 @@ class Centralized:
 
 
 
-POLICIES = {
+POLICIES: dict[str, DiscoveryPolicy] = {
     "centralized": Centralized(),
 }
 
