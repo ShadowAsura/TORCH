@@ -186,5 +186,62 @@ class Scheduler:
             return "uncertain"
 
 
+    async def _start_and_monitor(
+        self, endpoint: WorkerEndpoint, record: JobRecord
+    ) -> None:
+        # Once reserved, the scheduler NEVER dispatches this job elsewhere.
+        record.selected_worker = endpoint.name
+        record.worker_url = endpoint.url
+        record.scheduling_latency_ms = round(
+            (time.perf_counter() - record.accepted_at) * 1000, 3
+        )
+        record.state = "reserved"
+        self._reservation_successes += 1
+        # Include the initial start RPC in the observed job duration. A very
+        # short simulated job can finish before the HTTP start reply arrives.
+        record.started_at = time.perf_counter()
+        try:
+            response = await self.client.post(
+                f"{endpoint.url}/jobs/{record.request.job_id}/start",
+            )
+            if response.status_code not in (200, 201, 202):
+                raise RuntimeError(
+                    f"worker refused to start job: HTTP {response.status_code}"
+                )
+            record.state = "running"
+        except (httpx.HTTPError, ValueError):
+            # Starting may have succeeded remotely. Reconcile by polling that
+            # worker rather than submitting the job to another worker.
+            record.state = "running"
+        errors = 0
+        while True:
+            await asyncio.sleep(self.settings.poll_seconds)
+            try:
+                response = await self.client.get(
+                    f"{endpoint.url}/jobs/{record.request.job_id}"
+                )
+                response.raise_for_status()
+                state = response.json().get("state")
+                errors = 0
+                if state == "completed":
+                    record.state = state
+                    record.execution_seconds = round(
+                        time.perf_counter() - record.started_at, 6
+                    )
+                    return
+                if state == "reserved":
+                    # Duplicate start is idempotent; retry after an ambiguous reply.
+                    await self.client.post(
+                        f"{endpoint.url}/jobs/{record.request.job_id}/start"
+                    )
+            except (httpx.HTTPError, ValueError):
+                self._worker_errors += 1
+                errors += 1
+                if errors >= self.settings.max_monitor_errors:
+                    record.reason = (
+                        "worker unavailable after reservation; outcome unknown"
+                    )
+                    record.state = "failed"
+                    return
 
 
