@@ -293,3 +293,16 @@ class Scheduler:
                     (time.perf_counter() - record.accepted_at) * 1000, 3
                 )
 
+    @staticmethod
+    def _could_fit(snapshot: dict, job: JobRequest) -> bool:
+        try:
+            return (
+                job.gpu_count <= int(snapshot["gpu_count"])
+                and job.vram_gb <= float(snapshot["gpu_vram_gb"])
+                and (
+                    not job.compatible_gpu_types
+                    or snapshot["gpu_type"] in job.compatible_gpu_types
+                )
+            )
+        except (TypeError, ValueError, KeyError):
+            return False
