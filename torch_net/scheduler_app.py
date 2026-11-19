@@ -38,6 +38,15 @@ def create_app(
             "configured_workers": len(settings.workers),
         }
 
+    @app.get("/workers")
+    async def workers():
+        # These are configured network endpoints, not cached resource snapshots.
+        return {
+            "workers": [
+                {"worker_id": worker.name, "url": worker.url}
+                for worker in settings.workers
+            ]
+        }
 
     @app.post("/jobs")
     async def submit_job(job: SchedulingRequest):

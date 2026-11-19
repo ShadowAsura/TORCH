@@ -32,6 +32,38 @@ class SchedulerSettings:
     poll_seconds: float = 0.05
     max_monitor_errors: int = 5
 
+    @classmethod
+    def from_env(cls) -> "SchedulerSettings":
+        raw = os.getenv(
+            "SCHEDULER_WORKERS",
+            "worker-l40=http://localhost:8001,worker-a100=http://localhost:8002,"
+            "worker-t4=http://localhost:8003",
+        )
+        workers = []
+        for entry in raw.split(","):
+            if not entry.strip():
+                continue
+            name, sep, url = entry.strip().partition("=")
+            if not sep or not name.strip() or not url.strip():
+                raise SchedulingConfigurationError(
+                    "SCHEDULER_WORKERS requires name=http://host:port entries"
+                )
+            workers.append(WorkerEndpoint(name.strip(), url.strip().rstrip("/")))
+        settings = cls(
+            workers=tuple(workers),
+            policy=os.getenv("SCHEDULER_POLICY", "centralized"),
+            sample_size=int(os.getenv("SCHEDULER_SAMPLE_SIZE", "2")),
+            seed=int(os.getenv("SCHEDULER_SEED", "42")),
+            max_retries=int(os.getenv("SCHEDULER_MAX_RETRIES", "20")),
+            retry_delay_seconds=float(
+                os.getenv("SCHEDULER_RETRY_DELAY_SECONDS", "0.1")
+            ),
+            timeout_seconds=float(os.getenv("SCHEDULER_REQUEST_TIMEOUT_SECONDS", "1")),
+            poll_seconds=float(os.getenv("SCHEDULER_POLL_SECONDS", "0.05")),
+            max_monitor_errors=int(os.getenv("SCHEDULER_MAX_MONITOR_ERRORS", "5")),
+        )
+        settings.validate()
+        return settings
 
     def validate(self) -> None:
         if not self.workers or len({worker.name for worker in self.workers}) != len(
