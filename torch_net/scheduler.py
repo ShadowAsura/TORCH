@@ -128,6 +128,7 @@ class Scheduler:
     async def _query(self, endpoint: WorkerEndpoint, record: JobRecord):
         try:
             response = await self.client.get(f"{endpoint.url}/resources")
+            response.raise_for_status()
             return endpoint, response.json()
         except (httpx.HTTPError, ValueError):
             return None
