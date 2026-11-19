@@ -72,6 +72,8 @@ class SchedulerSettings:
             raise SchedulingConfigurationError(
                 "workers must be nonempty with unique names"
             )
+        if self.policy not in POLICIES:
+            raise SchedulingConfigurationError(f"unknown policy: {self.policy}")
         if min(self.retry_delay_seconds, self.timeout_seconds, self.poll_seconds) <= 0:
             raise SchedulingConfigurationError(
                 "timeouts and retry delays must be positive"
