@@ -35,10 +35,18 @@ class Centralized:
         return list(workers)
 
 
+class Sampling:
+    name = "sampling"
+
+    def select(self, workers, *, sample_size, seed, job_id, attempt):
+        # A per-job seed makes comparisons repeatable without shared RNG state.
+        rng = Random(f"{seed}:{job_id}:{attempt}")
+        return rng.sample(list(workers), min(sample_size, len(workers)))
 
 
 POLICIES: dict[str, DiscoveryPolicy] = {
     "centralized": Centralized(),
+    "sampling": Sampling(),
 }
 
 
