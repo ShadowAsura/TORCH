@@ -82,3 +82,23 @@ def is_compatible(resources: Mapping, job: JobRequest) -> bool:
         return False
 
 
+def rank_compatible(
+    snapshots: Sequence[tuple[WorkerEndpoint, Mapping]],
+    job: JobRequest,
+) -> list[tuple[WorkerEndpoint, Mapping]]:
+    """Both discovery policies use the same placement objective.
+
+    Prefer lower predicted simulated runtime, then less utilized capacity,
+    then a stable worker ID. The worker still enforces the actual allocation.
+    """
+    eligible = [
+        (endpoint, state) for endpoint, state in snapshots if is_compatible(state, job)
+    ]
+    return sorted(
+        eligible,
+        key=lambda item: (
+            job.work_units / float(item[1]["performance"]),
+            int(item[1]["allocated_gpus"]) / max(1, int(item[1]["gpu_count"])),
+            item[0].name,
+        ),
+    )
