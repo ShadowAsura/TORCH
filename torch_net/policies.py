@@ -68,5 +68,17 @@ def choose_workers(
     )
 
 
+def is_compatible(resources: Mapping, job: JobRequest) -> bool:
+    """Resources are authoritative only when the worker reserves atomically."""
+    try:
+        gpu_type = str(resources["gpu_type"])
+        return (
+            (not job.compatible_gpu_types or gpu_type in job.compatible_gpu_types)
+            and int(resources["free_gpus"]) >= job.gpu_count
+            and float(resources["gpu_vram_gb"]) >= job.vram_gb
+            and float(resources["performance"]) > 0
+        )
+    except (TypeError, ValueError, KeyError):
+        return False
 
 
