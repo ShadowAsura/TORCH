@@ -183,6 +183,10 @@ class Scheduler:
                     return "uncertain"
                 record.reservation_id = reservation_id
                 return "granted"
+            if response.status_code in (409, 422):
+                record.reservation_rejections += 1
+                self._reservation_rejections += 1
+                return "rejected"
             self._worker_errors += 1
             return "uncertain"
         except (httpx.HTTPError, ValueError):
