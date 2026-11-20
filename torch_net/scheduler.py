@@ -264,14 +264,7 @@ class Scheduler:
                     *(self._query(e, record) for e in chosen)
                 )
                 snapshots = [reply for reply in replies if reply is not None]
-                candidates = sorted(
-                    ((e, s) for e, s in snapshots if
-                     int(s["free_gpus"]) >= record.request.gpu_count
-                     and float(s["gpu_vram_gb"]) >= record.request.vram_gb
-                     and (not record.request.compatible_gpu_types
-                          or s["gpu_type"] in record.request.compatible_gpu_types)),
-                    key=lambda pair: -float(pair[1]["performance"]),
-                )
+                candidates = rank_compatible(snapshots, record.request)
                 for endpoint, _ in candidates:
                     result = await self._reserve(endpoint, record)
                     if result == "rejected":
