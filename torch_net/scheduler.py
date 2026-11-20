@@ -193,6 +193,23 @@ class Scheduler:
             self._worker_errors += 1
             return "uncertain"
 
+    async def _reconcile(self, endpoint: WorkerEndpoint, record: JobRecord) -> bool:
+        """Resolve an ambiguous reservation response before trying a new worker."""
+        try:
+            response = await self.client.get(
+                f"{endpoint.url}/jobs/{record.request.job_id}"
+            )
+            response.raise_for_status()
+            data = response.json()
+            if data.get("state") in ("reserved", "running", "completed", "failed"):
+                record.reservation_id = data.get("reservation_id")
+                return True
+        except (httpx.HTTPError, ValueError):
+            pass
+        # A timeout could mean the worker has reserved resources even if the
+        # subsequent lookup returns 404 while the request is still in flight.
+        # Never dispatch the same logical job on another worker in this case.
+        raise RuntimeError("reservation outcome unknown after worker connection error")
 
     async def _start_and_monitor(
         self, endpoint: WorkerEndpoint, record: JobRecord
