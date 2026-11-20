@@ -282,6 +282,9 @@ class Scheduler:
                 ):
                     record.reason = "no worker has compatible GPU capacity"
                     break
+                if attempt < self.settings.max_retries:
+                    record.retries += 1
+                    await asyncio.sleep(self.settings.retry_delay_seconds)
             record.state = "failed"
             record.reason = record.reason or "no capacity after bounded retries"
             record.scheduling_latency_ms = round(
