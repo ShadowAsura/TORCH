@@ -74,6 +74,8 @@ class SchedulerSettings:
             )
         if self.policy not in POLICIES:
             raise SchedulingConfigurationError(f"unknown policy: {self.policy}")
+        if self.sample_size < 1 or self.max_retries < 0 or self.max_monitor_errors < 1:
+            raise SchedulingConfigurationError("invalid sample size or retry limit")
         if min(self.retry_delay_seconds, self.timeout_seconds, self.poll_seconds) <= 0:
             raise SchedulingConfigurationError(
                 "timeouts and retry delays must be positive"
