@@ -1,0 +1,9 @@
+# CPU-only, simulated GPU capacity. No NVIDIA runtime or physical GPU is needed.
+# All four APIs run the same Docker image, selected by APP_MODULE.
+services:
+  scheduler:
+    build:
+      context: .
+    image: torch-network:local
+    environment:
+      APP_MODULE: torch_net.scheduler_app:app
