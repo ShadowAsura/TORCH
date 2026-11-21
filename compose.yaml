@@ -7,6 +7,9 @@ services:
     image: torch-network:local
     environment:
       APP_MODULE: torch_net.scheduler_app:app
+      SCHEDULER_WORKERS: "worker-l40=http://worker-l40:8000,worker-a100=http://worker-a100:8000,worker-t4=http://worker-t4:8000"
+    ports:
+      - "127.0.0.1:${TORCH_SCHEDULER_PORT:-8000}:8000"
   worker-l40:
     build:
       context: .
@@ -16,6 +19,8 @@ services:
       APP_MODULE: torch_net.worker_app:app
       WORKER_ID: worker-l40
       GPU_TYPE: L40
+    ports:
+      - "127.0.0.1:${TORCH_L40_PORT:-8001}:8000"
   worker-a100:
     image: torch-worker:local
     pull_policy: never
@@ -23,6 +28,8 @@ services:
       APP_MODULE: torch_net.worker_app:app
       WORKER_ID: worker-a100
       GPU_TYPE: A100
+    ports:
+      - "127.0.0.1:${TORCH_A100_PORT:-8002}:8000"
   worker-t4:
     image: torch-worker:local
     pull_policy: never
@@ -30,3 +37,5 @@ services:
       APP_MODULE: torch_net.worker_app:app
       WORKER_ID: worker-t4
       GPU_TYPE: T4
+    ports:
+      - "127.0.0.1:${TORCH_T4_PORT:-8003}:8000"
