@@ -151,6 +151,9 @@ class Worker:
         """Allocate GPUs once; same-ID same-payload retries return the first result."""
         async with self._lock:
             self._counters["reservation_attempts"] += 1
+            if self._closed:
+                self._counters["reservation_conflicts"] += 1
+                raise ReservationConflict("worker_shutting_down")
             self._expire_locked(perf_counter())
             existing = self._jobs.get(request.job_id)
             if existing is not None:
@@ -203,6 +206,8 @@ class Worker:
 
     async def start(self, job_id: str) -> JobStatus:
         async with self._lock:
+            if self._closed:
+                raise ReservationConflict("worker_shutting_down")
             self._expire_locked(perf_counter())
             record = self._jobs.get(job_id)
             if record is None:

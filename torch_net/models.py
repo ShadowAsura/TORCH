@@ -25,3 +25,4 @@ class JobStatus(BaseModel):
     reservation_id: str
     state: JobState
     gpu_count: int
+    error: str | None = None
