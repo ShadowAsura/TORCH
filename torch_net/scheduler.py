@@ -159,6 +159,9 @@ class Scheduler:
             self._create_task(self._run(record))
             return record.view(), True
 
+    def status(self, job_id: str) -> dict | None:
+        record = self._jobs.get(job_id)
+        return record.view() if record else None
 
 
     async def _query(self, endpoint: WorkerEndpoint, record: JobRecord):

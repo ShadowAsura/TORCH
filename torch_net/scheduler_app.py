@@ -58,6 +58,12 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return JSONResponse(status_code=202 if created else 200, content=record)
 
+    @app.get("/jobs/{job_id}")
+    async def get_job(job_id: str):
+        record = scheduler.status(job_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="unknown job_id")
+        return record
 
 
     return app
