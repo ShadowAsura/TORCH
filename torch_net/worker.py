@@ -231,6 +231,8 @@ class Worker:
             await _wait_until(record.started_at + delay)
         except asyncio.CancelledError:
             error = "execution_cancelled"
+        except Exception as exc:  # noqa: BLE001 - finally always returns GPU capacity
+            error = f"execution_error:{type(exc).__name__}"
         finally:
             async with self._lock:
                 if record.state == "running":
@@ -248,6 +250,7 @@ class Worker:
                     else:
                         record.state = "failed"
                         record.error = error
+                        log.warning("Job %s failed: %s", record.request.job_id, error)
                     self._release_locked(record)
 
     async def get_job(self, job_id: str) -> JobStatus:

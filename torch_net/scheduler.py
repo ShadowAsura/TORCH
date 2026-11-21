@@ -262,6 +262,10 @@ class Scheduler:
                         time.perf_counter() - record.started_at, 6
                     )
                     return
+                if state == "failed":
+                    record.reason = "worker reported execution failure"
+                    record.state = state
+                    return
                 if state == "reserved":
                     # Duplicate start is idempotent; retry after an ambiguous reply.
                     await self.client.post(
