@@ -50,8 +50,15 @@ def create_app(
 
     @app.post("/jobs")
     async def submit_job(job: SchedulingRequest):
-        record, created = await scheduler.submit(job)
+        try:
+            record, created = await scheduler.submit(job)
+        except SchedulingConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return JSONResponse(status_code=202 if created else 200, content=record)
+
+
 
     return app
 
