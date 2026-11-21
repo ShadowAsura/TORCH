@@ -154,6 +154,11 @@ class Scheduler:
         if policy not in POLICIES:
             raise SchedulingConfigurationError(f"unknown policy: {policy}")
         async with self._lock:
+            existing = self._jobs.get(job.job_id)
+            if existing is not None:
+                if existing.request != job:
+                    raise ValueError("job_id already used for another request")
+                return existing.view(), False
             record = JobRecord(request=job, policy=policy)
             self._jobs[job.job_id] = record
             self._create_task(self._run(record))
