@@ -7,3 +7,26 @@ services:
     image: torch-network:local
     environment:
       APP_MODULE: torch_net.scheduler_app:app
+  worker-l40:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    image: torch-worker:local
+    environment:
+      APP_MODULE: torch_net.worker_app:app
+      WORKER_ID: worker-l40
+      GPU_TYPE: L40
+  worker-a100:
+    image: torch-worker:local
+    pull_policy: never
+    environment:
+      APP_MODULE: torch_net.worker_app:app
+      WORKER_ID: worker-a100
+      GPU_TYPE: A100
+  worker-t4:
+    image: torch-worker:local
+    pull_policy: never
+    environment:
+      APP_MODULE: torch_net.worker_app:app
+      WORKER_ID: worker-t4
+      GPU_TYPE: T4
