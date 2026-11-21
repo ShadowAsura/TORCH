@@ -283,6 +283,17 @@ class Worker:
         async with self._lock:
             self._closed = True
             now = perf_counter()
+            for record in self._jobs.values():
+                if record.state not in ("reserved", "running"):
+                    continue
+                if record.started_at is not None:
+                    self._busy_gpu_seconds += record.request.gpu_count * (
+                        now - record.started_at
+                    )
+                record.state = "failed"
+                record.error = "worker_shutdown"
+                self._counters["jobs_failed"] += 1
+                self._release_locked(record)
             tasks = [
                 task
                 for record in self._jobs.values()
