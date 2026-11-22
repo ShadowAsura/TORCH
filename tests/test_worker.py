@@ -192,8 +192,59 @@ def test_concurrent_identical_job_id_has_one_reservation():
     asyncio.run(check())
 
 
+def test_reservation_lease_expiry_releases_capacity_and_blocks_late_start():
+    async def check():
+        app = create_app(settings(reservation_lease_seconds=0.03))
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            reserved = await client.post("/reservations", json=job(gpu_count=2))
+            assert reserved.status_code == 201
+            await asyncio.sleep(0.07)
+            expired = (await client.get("/jobs/job-1")).json()
+            assert expired["state"] == "failed"
+            assert expired["error"] == "reservation_expired"
+            assert (await client.get("/resources")).json()["free_gpus"] == 2
+            assert (await client.post("/jobs/job-1/start")).status_code == 409
+            # A retry retains its original expired reservation; it cannot create
+            # a second execution for the same job ID on this worker.
+            duplicate = await client.post("/reservations", json=job(gpu_count=2))
+            assert duplicate.status_code == 200
+            assert duplicate.json() == expired
+            replacement = await client.post(
+                "/reservations", json=job("replacement", gpu_count=2)
+            )
+            assert replacement.status_code == 201
+            metrics = (await client.get("/metrics")).json()
+            assert metrics["reservations_expired"] == 1
+            assert metrics["jobs_failed"] == 1
+        await app.state.worker.close()
+
+    asyncio.run(check())
 
 
+def test_cancelled_execution_fails_and_releases_once():
+    async def check():
+        app = create_app(settings(sim_seconds_per_work_unit=100.0))
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            assert (
+                await client.post("/reservations", json=job(gpu_count=2))
+            ).status_code == 201
+            assert (await client.post("/jobs/job-1/start")).status_code == 200
+            # Shutdown can happen before the new task gets its first timeslice.
+            await app.state.worker.close()
+            assert (await client.get("/jobs/job-1")).json()["state"] == "failed"
+            assert (await client.get("/resources")).json()["allocated_gpus"] == 0
+            assert (await client.get("/metrics")).json()["jobs_failed"] == 1
+            await app.state.worker.close()
+            assert (await client.get("/metrics")).json()["jobs_failed"] == 1
+            assert (
+                await client.post("/reservations", json=job("late"))
+            ).status_code == 409
+
+    asyncio.run(check())
 
 
 def test_started_job_outlives_reservation_lease():

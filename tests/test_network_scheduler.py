@@ -45,6 +45,15 @@ def job(job_id: str, **overrides) -> dict:
     return request
 
 
+async def await_terminal(client, job_id: str):
+    for _ in range(300):
+        response = await client.get(f"/jobs/{job_id}")
+        assert response.status_code == 200
+        result = response.json()
+        if result["state"] in ("completed", "failed"):
+            return result
+        await asyncio.sleep(0.005)
+    raise AssertionError(f"job {job_id} did not complete or fail within test budget")
 
 
 def worker(worker_id: str, kind: str, vram: int, performance: float, count: int = 1):
