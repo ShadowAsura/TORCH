@@ -5,6 +5,7 @@ services:
     build:
       context: .
     image: torch-network:local
+    init: true
     environment:
       APP_MODULE: torch_net.scheduler_app:app
       SCHEDULER_WORKERS: "worker-l40=http://worker-l40:8000,worker-a100=http://worker-a100:8000,worker-t4=http://worker-t4:8000"
@@ -18,6 +19,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     image: torch-worker:local
+    init: true
     environment:
       APP_MODULE: torch_net.worker_app:app
       WORKER_ID: worker-l40
@@ -31,6 +33,7 @@ services:
   worker-a100:
     image: torch-worker:local
     pull_policy: never
+    init: true
     environment:
       APP_MODULE: torch_net.worker_app:app
       WORKER_ID: worker-a100
@@ -44,6 +47,7 @@ services:
   worker-t4:
     image: torch-worker:local
     pull_policy: never
+    init: true
     environment:
       APP_MODULE: torch_net.worker_app:app
       WORKER_ID: worker-t4
