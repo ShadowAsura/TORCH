@@ -14,6 +14,20 @@ services:
       SCHEDULER_SEED: "${TORCH_SEED:-42}"
     ports:
       - "127.0.0.1:${TORCH_SCHEDULER_PORT:-8000}:8000"
+    depends_on:
+      worker-l40:
+        condition: service_healthy
+      worker-a100:
+        condition: service_healthy
+      worker-t4:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      start_period: 20s
+      retries: 12
+
   worker-l40:
     build:
       context: .
@@ -30,6 +44,13 @@ services:
       SIM_SECONDS_PER_WORK_UNIT: "${TORCH_SIM_SECONDS_PER_WORK_UNIT:-0.12}"
     ports:
       - "127.0.0.1:${TORCH_L40_PORT:-8001}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      start_period: 20s
+      retries: 12
+
   worker-a100:
     image: torch-worker:local
     pull_policy: never
@@ -44,6 +65,13 @@ services:
       SIM_SECONDS_PER_WORK_UNIT: "${TORCH_SIM_SECONDS_PER_WORK_UNIT:-0.12}"
     ports:
       - "127.0.0.1:${TORCH_A100_PORT:-8002}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      start_period: 20s
+      retries: 12
+
   worker-t4:
     image: torch-worker:local
     pull_policy: never
@@ -58,3 +86,9 @@ services:
       SIM_SECONDS_PER_WORK_UNIT: "${TORCH_SIM_SECONDS_PER_WORK_UNIT:-0.12}"
     ports:
       - "127.0.0.1:${TORCH_T4_PORT:-8003}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      start_period: 20s
+      retries: 12
