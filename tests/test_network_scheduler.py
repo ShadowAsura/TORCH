@@ -47,6 +47,18 @@ def job(job_id: str, **overrides) -> dict:
 
 
 
+def worker(worker_id: str, kind: str, vram: int, performance: float, count: int = 1):
+    return make_worker(
+        WorkerSettings(
+            worker_id=worker_id,
+            gpu_type=kind,
+            gpu_count=count,
+            gpu_vram_gb=vram,
+            gpu_performance=performance,
+            sim_seconds_per_work_unit=0.008,
+            reservation_lease_seconds=1.0,
+        )
+    )
 
 
 

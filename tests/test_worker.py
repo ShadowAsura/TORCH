@@ -124,6 +124,45 @@ def test_atomic_concurrent_requests_and_duplicate_reservations():
     asyncio.run(check())
 
 
+def test_running_jobs_release_gpus_and_start_is_idempotent():
+    async def check():
+        app = create_app(settings())
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            initial = await client.post("/reservations", json=job(gpu_count=2))
+            assert initial.status_code == 201
+            reserved = initial.json()
+            assert reserved["state"] == "reserved"
+            assert reserved["worker_id"] == "test-a100"
+            assert reserved["reservation_id"]
+            assert (await client.get("/resources")).json()["free_gpus"] == 0
+            assert (await client.post("/jobs/missing/start")).status_code == 404
+            first, second = await asyncio.gather(
+                *(client.post("/jobs/job-1/start") for _ in range(2))
+            )
+            assert first.status_code == second.status_code == 200
+            assert first.json() == second.json()
+            assert first.json()["state"] == "running"
+            assert (
+                await client.post("/reservations", json=job("too-soon"))
+            ).status_code == 409
+            await asyncio.sleep(0.10)
+            final = (await client.get("/jobs/job-1")).json()
+            assert final["state"] == "completed"
+            assert final["reservation_id"] == reserved["reservation_id"]
+            assert (await client.get("/resources")).json()["free_gpus"] == 2
+            repeated_start = await client.post("/jobs/job-1/start")
+            assert repeated_start.status_code == 200
+            assert repeated_start.json()["state"] == "completed"
+            metrics = (await client.get("/metrics")).json()
+            assert metrics["jobs_started"] == metrics["jobs_completed"] == 1
+            assert metrics["jobs_failed"] == 0
+            assert metrics["busy_gpu_seconds"] > 0
+            assert 0 < metrics["gpu_utilization"] <= 1
+        await app.state.worker.close()
+
+    asyncio.run(check())
 
 
 def test_concurrent_identical_job_id_has_one_reservation():
@@ -157,6 +196,25 @@ def test_concurrent_identical_job_id_has_one_reservation():
 
 
 
+def test_started_job_outlives_reservation_lease():
+    async def check():
+        app = create_app(
+            settings(reservation_lease_seconds=0.02, sim_seconds_per_work_unit=0.10)
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            assert (
+                await client.post("/reservations", json=job(gpu_count=2))
+            ).status_code == 201
+            assert (await client.post("/jobs/job-1/start")).status_code == 200
+            await asyncio.sleep(0.07)
+            assert (await client.get("/jobs/job-1")).json()["state"] == "running"
+            assert (await client.get("/resources")).json()["allocated_gpus"] == 2
+            assert (await client.get("/metrics")).json()["reservations_expired"] == 0
+        await app.state.worker.close()
+
+    asyncio.run(check())
 
 
 
