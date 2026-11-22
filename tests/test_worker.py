@@ -54,6 +54,71 @@ def test_resources_compatibility_and_validation():
                 "allocated_gpus": 0,
                 "active_jobs": 0,
             }
+            for body, detail in (
+                (
+                    job("wrong-type", compatible_gpu_types=["L40"]),
+                    "incompatible_gpu_type",
+                ),
+                (job("wrong-memory", vram_gb=81), "insufficient_gpu_vram"),
+                (job("too-large", gpu_count=3), "insufficient_free_gpus"),
+            ):
+                response = await client.post("/reservations", json=body)
+                assert response.status_code == 409
+                assert response.json()["detail"] == detail
+            for body in (
+                job("invalid-count", gpu_count=0),
+                job("invalid-work", work_units=0),
+                job("invalid-vram", vram_gb=-1),
+                job(""),
+            ):
+                assert (
+                    await client.post("/reservations", json=body)
+                ).status_code == 422
+            # Empty compatible_gpu_types means any GPU type.
+            assert (
+                await client.post(
+                    "/reservations", json=job("any-type", compatible_gpu_types=[])
+                )
+            ).status_code == 201
+        await app.state.worker.close()
+
+    asyncio.run(check())
+
+
+def test_atomic_concurrent_requests_and_duplicate_reservations():
+    async def check():
+        app = create_app(settings(gpu_count=2))
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            replies = await asyncio.gather(
+                *(client.post("/reservations", json=job(f"r-{i}")) for i in range(25))
+            )
+            assert sum(response.status_code == 201 for response in replies) == 2
+            assert sum(response.status_code == 409 for response in replies) == 23
+            assert (await client.get("/resources")).json()["free_gpus"] == 0
+            winners = [
+                response.json() for response in replies if response.status_code == 201
+            ]
+            for winner in winners:
+                response = await client.post(
+                    "/reservations", json=job(winner["job_id"])
+                )
+                assert response.status_code == 200
+                assert response.json() == winner
+            collision = await client.post(
+                "/reservations", json=job(winners[0]["job_id"], work_units=10)
+            )
+            assert collision.status_code == 409
+            assert (
+                collision.json()["detail"]
+                == "job_id_already_used_with_different_request"
+            )
+            assert (await client.get("/resources")).json()["allocated_gpus"] == 2
+            metrics = (await client.get("/metrics")).json()
+            assert metrics["reservations_granted"] == 2
+            assert metrics["reservation_conflicts"] == 24
+            assert metrics["reservation_duplicates"] == 2
         await app.state.worker.close()
 
     asyncio.run(check())
@@ -61,8 +126,31 @@ def test_resources_compatibility_and_validation():
 
 
 
+def test_concurrent_identical_job_id_has_one_reservation():
+    async def check():
+        app = create_app(settings(gpu_count=1))
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            replies = await asyncio.gather(
+                *(
+                    client.post("/reservations", json=job("identical"))
+                    for _ in range(15)
+                )
+            )
+            assert sorted(response.status_code for response in replies) == [
+                200
+            ] * 14 + [201]
+            assert len({response.json()["reservation_id"] for response in replies}) == 1
+            resources = (await client.get("/resources")).json()
+            assert resources["allocated_gpus"] == 1
+            assert resources["active_jobs"] == 1
+            metrics = (await client.get("/metrics")).json()
+            assert metrics["reservations_granted"] == 1
+            assert metrics["reservation_duplicates"] == 14
+        await app.state.worker.close()
 
-
+    asyncio.run(check())
 
 
 
