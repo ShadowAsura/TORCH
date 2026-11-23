@@ -268,5 +268,43 @@ def test_started_job_outlives_reservation_lease():
     asyncio.run(check())
 
 
+def test_shutdown_releases_unstarted_reservation():
+    async def check():
+        app = create_app(settings())
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            assert (
+                await client.post("/reservations", json=job(gpu_count=2))
+            ).status_code == 201
+            await app.state.worker.close()
+            response = await client.get("/jobs/job-1")
+            assert response.json()["state"] == "failed"
+            assert response.json()["error"] == "worker_shutdown"
+            resources = (await client.get("/resources")).json()
+            assert resources["allocated_gpus"] == 0
+            assert resources["active_jobs"] == 0
+            assert resources["free_gpus"] == 2
+
+    asyncio.run(check())
 
 
+def test_settings_read_all_worker_environment_variables():
+    configured = WorkerSettings.from_env(
+        {
+            "WORKER_ID": "node-2",
+            "GPU_TYPE": "L40",
+            "GPU_COUNT": "4",
+            "GPU_VRAM_GB": "48",
+            "GPU_PERFORMANCE": "1.5",
+            "SIM_SECONDS_PER_WORK_UNIT": "0.25",
+            "RESERVATION_LEASE_SECONDS": "12",
+        }
+    )
+    assert configured.worker_id == "node-2"
+    assert configured.gpu_type == "L40"
+    assert configured.gpu_count == 4
+    assert configured.gpu_vram_gb == 48
+    assert configured.gpu_performance == 1.5
+    assert configured.sim_seconds_per_work_unit == 0.25
+    assert configured.reservation_lease_seconds == 12
