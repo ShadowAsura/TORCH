@@ -168,6 +168,31 @@ class Scheduler:
         record = self._jobs.get(job_id)
         return record.view() if record else None
 
+    def metrics(self) -> dict[str, Any]:
+        records = list(self._jobs.values())
+        delays = [
+            r.scheduling_latency_ms
+            for r in records
+            if r.scheduling_latency_ms is not None
+        ]
+        durations = [
+            r.execution_seconds for r in records if r.execution_seconds is not None
+        ]
+        return {
+            "jobs_submitted": len(records),
+            "jobs_completed": sum(r.state == "completed" for r in records),
+            "jobs_failed": sum(r.state == "failed" for r in records),
+            "worker_state_queries": sum(r.query_count for r in records),
+            "reservation_successes": self._reservation_successes,
+            "reservation_rejections": self._reservation_rejections,
+            "scheduling_retries": sum(r.retries for r in records),
+            "worker_network_errors": self._worker_errors,
+            "mean_scheduling_latency_ms": sum(delays) / len(delays) if delays else None,
+            "mean_execution_seconds": sum(durations) / len(durations)
+            if durations
+            else None,
+            "note": "Application message bytes are deferred; no estimated byte counts are reported.",
+        }
 
     async def _query(self, endpoint: WorkerEndpoint, record: JobRecord):
         try:

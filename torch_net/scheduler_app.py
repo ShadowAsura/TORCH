@@ -65,6 +65,9 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown job_id")
         return record
 
+    @app.get("/metrics")
+    async def get_metrics():
+        return scheduler.metrics()
 
     return app
 
