@@ -195,6 +195,8 @@ class Scheduler:
         }
 
     async def _query(self, endpoint: WorkerEndpoint, record: JobRecord):
+        record.query_count += 1
+        record.queried_workers.append(endpoint.name)
         try:
             response = await self.client.get(f"{endpoint.url}/resources")
             response.raise_for_status()
