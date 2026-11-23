@@ -202,6 +202,7 @@ class Scheduler:
             response.raise_for_status()
             return endpoint, response.json()
         except (httpx.HTTPError, ValueError):
+            self._worker_errors += 1
             return None
 
     async def _reserve(self, endpoint: WorkerEndpoint, record: JobRecord) -> str:

@@ -57,6 +57,9 @@ def create_app(settings: WorkerSettings | None = None) -> FastAPI:
         except JobNotFound as exc:
             raise HTTPException(status_code=404, detail="job_not_found") from exc
 
+    @app.get("/metrics")
+    async def metrics() -> dict:
+        return await worker.metrics()
 
     return app
 

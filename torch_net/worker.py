@@ -247,6 +247,7 @@ class Worker:
                     )
                     if error is None:
                         record.state = "completed"
+                        self._counters["jobs_completed"] += 1
                         log.debug(
                             "Completed %s on %s",
                             record.request.job_id,
@@ -255,6 +256,7 @@ class Worker:
                     else:
                         record.state = "failed"
                         record.error = error
+                        self._counters["jobs_failed"] += 1
                         log.warning("Job %s failed: %s", record.request.job_id, error)
                     self._release_locked(record)
 
@@ -282,6 +284,29 @@ class Worker:
                 "active_jobs": sum(job.allocated for job in self._jobs.values()),
             }
 
+    async def metrics(self) -> dict:
+        async with self._lock:
+            now = perf_counter()
+            self._expire_locked(now)
+            uptime = max(now - self._created_at, 0)
+            busy_gpu_seconds = self._busy_gpu_seconds + sum(
+                record.request.gpu_count * (now - record.started_at)
+                for record in self._jobs.values()
+                if record.state == "running" and record.started_at is not None
+            )
+            return {
+                "worker_id": self.settings.worker_id,
+                **self._counters,
+                "uptime_seconds": uptime,
+                "busy_gpu_seconds": busy_gpu_seconds,
+                "gpu_utilization": (
+                    min(1.0, busy_gpu_seconds / (uptime * self.settings.gpu_count))
+                    if uptime > 0
+                    else 0.0
+                ),
+                "allocated_gpus": self._allocated_gpus,
+                "free_gpus": self.settings.gpu_count - self._allocated_gpus,
+            }
 
     async def close(self) -> None:
         """Stop outstanding tasks and account for interrupted runs on shutdown."""
