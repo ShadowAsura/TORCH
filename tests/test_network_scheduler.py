@@ -70,8 +70,84 @@ def worker(worker_id: str, kind: str, vram: int, performance: float, count: int 
     )
 
 
+async def run_with_network(
+    configured, live_apps, scenario, *, sample_size=2, max_retries=20
+):
+    settings = SchedulerSettings(
+        workers=tuple(
+            WorkerEndpoint(name, f"http://{name}:8000") for name in configured
+        ),
+        sample_size=sample_size,
+        max_retries=max_retries,
+        retry_delay_seconds=0.01,
+        timeout_seconds=0.1,
+        poll_seconds=0.005,
+    )
+    try:
+        async with httpx.AsyncClient(transport=WorkerRouter(live_apps)) as worker_http:
+            app = make_scheduler(settings, client=worker_http)
+            try:
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app),
+                    base_url="http://scheduler",
+                ) as scheduler_http:
+                    await scenario(scheduler_http, live_apps)
+            finally:
+                await app.state.scheduler.close()
+    finally:
+        for worker_app in live_apps.values():
+            await worker_app.state.worker.close()
 
 
+def test_centralized_queries_all_workers_sampling_queries_subset_and_releases():
+    async def scenario(client, apps):
+        centralized = await client.post(
+            "/jobs", json=job("central", policy="centralized")
+        )
+        assert centralized.status_code == 202
+        result = await await_terminal(client, "central")
+        assert result["state"] == "completed"
+        assert result["selected_worker"] == "a100"  # shortest simulated runtime
+        assert result["query_count"] == 3
+        assert set(result["queried_workers"]) == {"a100", "l40", "t4"}
+        assert result["reservation_rejections"] == 0
+        assert result["scheduling_latency_ms"] >= 0
+        assert result["execution_seconds"] > 0
+
+        sampling = await client.post("/jobs", json=job("sampled", policy="sampling"))
+        assert sampling.status_code == 202
+        sampled = await await_terminal(client, "sampled")
+        assert sampled["state"] == "completed"
+        assert sampled["query_count"] == 2
+        assert len(sampled["queried_workers"]) == 2
+        assert sampled["selected_worker"] in sampled["queried_workers"]
+        assert (
+            await client.post("/jobs", json=job("sampled", policy="sampling"))
+        ).status_code == 200
+        assert (
+            await client.post("/jobs", json=job("sampled", work_units=5))
+        ).status_code == 409
+
+        for app in apps.values():
+            state = await app.state.worker.resources()
+            assert state["allocated_gpus"] == 0
+        metrics = (await client.get("/metrics")).json()
+        assert metrics["jobs_completed"] == 2
+        assert metrics["worker_state_queries"] == 5
+        assert metrics["reservation_successes"] == 2
+        assert metrics["mean_execution_seconds"] > 0
+
+    asyncio.run(
+        run_with_network(
+            ["a100", "l40", "t4"],
+            {
+                "a100": worker("a100", "A100", 80, 3),
+                "l40": worker("l40", "L40", 48, 2),
+                "t4": worker("t4", "T4", 16, 1),
+            },
+            scenario,
+        )
+    )
 
 
 
