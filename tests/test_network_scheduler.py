@@ -150,9 +150,96 @@ def test_centralized_queries_all_workers_sampling_queries_subset_and_releases():
     )
 
 
+def test_heterogeneous_constraints_reject_incompatible_jobs():
+    async def scenario(client, _):
+        submitted = await client.post(
+            "/jobs",
+            json=job("a100-only", vram_gb=64, compatible_gpu_types=["A100"]),
+        )
+        assert submitted.status_code == 202
+        result = await await_terminal(client, "a100-only")
+        assert result["state"] == "completed"
+        assert result["selected_worker"] == "a100"
+
+        rejected = await client.post("/jobs", json=job("impossible", vram_gb=128))
+        assert rejected.status_code == 202
+        failure = await await_terminal(client, "impossible")
+        assert failure["state"] == "failed"
+        assert failure["reason"] == "no worker has compatible GPU capacity"
+        assert failure["query_count"] == 2
+        assert failure["retries"] == 0
+
+    asyncio.run(
+        run_with_network(
+            ["l40", "a100"],
+            {"l40": worker("l40", "L40", 48, 1), "a100": worker("a100", "A100", 80, 2)},
+            scenario,
+        )
+    )
 
 
+def test_unreachable_worker_does_not_prevent_healthy_worker_placement():
+    async def scenario(client, _):
+        assert (await client.get("/health")).json()["configured_workers"] == 2
+        assert (await client.post("/jobs", json=job("available"))).status_code == 202
+        status = await await_terminal(client, "available")
+        assert status["state"] == "completed"
+        assert status["selected_worker"] == "a100"
+        assert status["query_count"] == 2
+        assert (await client.get("/metrics")).json()["worker_network_errors"] >= 1
+
+    asyncio.run(
+        run_with_network(
+            ["unavailable", "a100"],
+            {"a100": worker("a100", "A100", 80, 2)},
+            scenario,
+        )
+    )
 
 
+def test_competing_scheduler_requests_retry_after_worker_reservation_rejection():
+    async def scenario(client, apps):
+        first, second = await asyncio.gather(
+            client.post("/jobs", json=job("first", work_units=15)),
+            client.post("/jobs", json=job("second", work_units=15)),
+        )
+        assert first.status_code == second.status_code == 202
+        a, b = await asyncio.gather(
+            await_terminal(client, "first"),
+            await_terminal(client, "second"),
+        )
+        assert a["state"] == b["state"] == "completed"
+        assert (await apps["a100"].state.worker.resources())["free_gpus"] == 1
+        metrics = (await client.get("/metrics")).json()
+        assert metrics["reservation_successes"] == 2
+        assert metrics["reservation_rejections"] >= 1
+        assert metrics["scheduling_retries"] >= 1
+
+    asyncio.run(
+        run_with_network(
+            ["a100"],
+            {"a100": worker("a100", "A100", 80, 1)},
+            scenario,
+            max_retries=100,
+        )
+    )
 
 
+def test_missing_workers_fail_after_bounded_retries():
+    async def scenario(client, _):
+        assert (await client.post("/jobs", json=job("offline"))).status_code == 202
+        result = await await_terminal(client, "offline")
+        assert result["state"] == "failed"
+        assert result["reason"] == "no capacity after bounded retries"
+        assert result["attempts"] == 3
+        assert result["retries"] == 2
+        assert result["query_count"] == 3
+
+    asyncio.run(
+        run_with_network(
+            ["missing"],
+            {},
+            scenario,
+            max_retries=2,
+        )
+    )
