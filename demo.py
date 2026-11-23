@@ -46,6 +46,25 @@ def check(ok, message):
         raise RuntimeError(message)
 
 
+def poll_job(client, scheduler, workers, job_id, timeout, interval):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        job = request(client, "GET", scheduler, f"/jobs/{job_id}")
+        selected = job.get("selected_worker")
+        check(
+            not selected or selected in workers, f"unknown selected worker: {selected}"
+        )
+        worker_job = (
+            request(client, "GET", workers[selected], f"/jobs/{job_id}")
+            if selected
+            else {}
+        )
+        if job.get("state") == "failed" or worker_job.get("state") == "failed":
+            raise RuntimeError(f"{job_id} failed: {job.get('reason') or worker_job}")
+        if job.get("state") == worker_job.get("state") == "completed":
+            return job, worker_job
+        time.sleep(interval)
+    raise RuntimeError(f"{job_id} did not complete within {timeout:g}s")
 
 
 def run(args):
@@ -53,8 +72,25 @@ def run(args):
     workers = worker_urls(args.worker)
     policies = ("centralized", "sampling") if args.policy == "both" else (args.policy,)
     with httpx.Client(timeout=5.0) as client:
+        check(
+            request(client, "GET", scheduler, "/health").get("status") == "ok",
+            "scheduler is unhealthy",
+        )
+        advertised = request(client, "GET", scheduler, "/workers")["workers"]
+        check(
+            {item["worker_id"] for item in advertised} == set(workers),
+            "worker names differ from scheduler configuration; use --worker NAME=URL",
+        )
 
         initial = {}
+        for name, url in workers.items():
+            health = request(client, "GET", url, "/health")
+            check(
+                health.get("status") == "ok" and health.get("worker_id") == name,
+                f"{name} is unhealthy",
+            )
+            initial[name] = request(client, "GET", url, "/resources")
+            check(initial[name].get("worker_id") == name, f"{name} resources mismatch")
 
         gpu_types = args.gpu_type or sorted({r["gpu_type"] for r in initial.values()})
         results = []
@@ -113,7 +149,78 @@ def run(args):
                 }
             )
 
+        return {
+            "jobs": results,
+            "workers": initial,
+            "scheduler_metrics": request(client, "GET", scheduler, "/metrics"),
+            "worker_metrics": {
+                name: request(client, "GET", url, "/metrics")
+                for name, url in workers.items()
+            },
+        }
 
 
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--url",
+        default=os.getenv(
+            "TORCH_SCHEDULER_URL",
+            f"http://localhost:{os.getenv('TORCH_SCHEDULER_PORT', '8000')}",
+        ),
+    )
+    parser.add_argument(
+        "--worker",
+        action="append",
+        metavar="NAME=URL",
+        help="repeat for each worker; defaults to localhost:8001-8003",
+    )
+    parser.add_argument(
+        "--policy", choices=("both", "centralized", "sampling"), default="both"
+    )
+    parser.add_argument("--gpu-type", action="append")
+    parser.add_argument("--gpu-count", type=int, default=1)
+    parser.add_argument("--vram-gb", type=float, default=8.0)
+    parser.add_argument("--work-units", type=float, default=8.0)
+    parser.add_argument("--timeout", type=float, default=45.0)
+    parser.add_argument("--interval", type=float, default=0.2)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    if args.gpu_count < 1 or not all(
+        math.isfinite(x) and x > 0
+        for x in (args.vram_gb, args.work_units, args.timeout, args.interval)
+    ):
+        parser.error("job size, timeout and interval must be positive")
+    try:
+        result = run(args)
+    except (httpx.HTTPError, RuntimeError, TypeError, ValueError, KeyError) as exc:
+        print(f"TORCH network demo FAILED: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print("TORCH network demo PASS")
+        for job in result["jobs"]:
+            print(
+                f"  {job['policy']}: {job['job_id']} completed on "
+                f"{job['selected_worker']} (queried {job['query_count']}: "
+                f"{', '.join(job['queried_workers'])}); "
+                f"free GPUs {job['free_gpus_before']} -> {job['free_gpus_after']}"
+            )
+        metrics = result["scheduler_metrics"]
+        print(
+            f"  metrics: submitted={metrics['jobs_submitted']}, "
+            f"completed={metrics['jobs_completed']}, "
+            f"worker queries={metrics['worker_state_queries']}"
+        )
+        for name, metrics in result["worker_metrics"].items():
+            print(
+                f"  {name}: completed={metrics['jobs_completed']}, "
+                f"allocated={metrics['allocated_gpus']}, "
+                f"utilization={metrics['gpu_utilization']:.3f}"
+            )
+    return 0
 
 
+if __name__ == "__main__":
+    sys.exit(main())
