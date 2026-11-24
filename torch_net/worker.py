@@ -45,7 +45,11 @@ class WorkerSettings:
     def __post_init__(self) -> None:
         if not self.worker_id.strip() or not self.gpu_type.strip():
             raise ValueError("WORKER_ID and GPU_TYPE must be nonempty")
-        if isinstance(self.gpu_count, bool) or self.gpu_count < 1:
+        if (
+            not isinstance(self.gpu_count, int)
+            or isinstance(self.gpu_count, bool)
+            or self.gpu_count < 1
+        ):
             raise ValueError("GPU_COUNT must be a positive integer")
         for name, value in (
             ("GPU_VRAM_GB", self.gpu_vram_gb),
@@ -53,7 +57,12 @@ class WorkerSettings:
             ("SIM_SECONDS_PER_WORK_UNIT", self.sim_seconds_per_work_unit),
             ("RESERVATION_LEASE_SECONDS", self.reservation_lease_seconds),
         ):
-            if not math.isfinite(value) or value <= 0:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
                 raise ValueError(f"{name} must be a finite positive number")
 
     @classmethod

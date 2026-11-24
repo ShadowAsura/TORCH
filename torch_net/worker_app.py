@@ -6,7 +6,9 @@ Start with: uvicorn torch_net.worker_app:app --host 0.0.0.0 --port 8001
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.exceptions import RequestValidationError
 
+from .http_errors import validation_error_handler
 from .models import JobRequest, JobStatus
 from .worker import JobNotFound, ReservationConflict, Worker, WorkerSettings
 
@@ -23,6 +25,7 @@ def create_app(settings: WorkerSettings | None = None) -> FastAPI:
 
     app = FastAPI(title="TORCH Worker", lifespan=lifespan)
     app.state.worker = worker
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

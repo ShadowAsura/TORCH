@@ -1,7 +1,9 @@
 """Actual ASGI requests exercising worker reservation races and cleanup."""
 
 import asyncio
+import json
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from torch_net.worker import WorkerSettings
@@ -308,3 +310,105 @@ def test_settings_read_all_worker_environment_variables():
     assert configured.gpu_performance == 1.5
     assert configured.sim_seconds_per_work_unit == 0.25
     assert configured.reservation_lease_seconds == 12
+
+
+@pytest.mark.parametrize("gpu_count", [0, -1, True, 2.5, "2"])
+def test_worker_settings_requires_whole_gpu_counts(gpu_count):
+    with pytest.raises(ValueError, match="GPU_COUNT must be a positive integer"):
+        WorkerSettings(gpu_count=gpu_count)
+
+
+@pytest.mark.parametrize(
+    "invalid_value", [0, -1, True, float("nan"), float("inf"), "1.0"]
+)
+@pytest.mark.parametrize(
+    "field",
+    [
+        "gpu_vram_gb",
+        "gpu_performance",
+        "sim_seconds_per_work_unit",
+        "reservation_lease_seconds",
+    ],
+)
+def test_worker_settings_rejects_invalid_positive_floats(field, invalid_value):
+    with pytest.raises(ValueError, match="must be a finite positive number"):
+        WorkerSettings(**{field: invalid_value})
+
+
+def test_rejects_nonfinite_numbers_and_malformed_json_with_422():
+    async def check():
+        app = create_app(settings())
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            for value in ("NaN", "Infinity", "-Infinity"):
+                for field in ("vram_gb", "work_units", "gpu_count"):
+                    body = job(f"nonfinite-{field}")
+                    body[field] = 1
+                    payload = json.dumps(body).replace(
+                        f'"{field}": 1', f'"{field}": {value}'
+                    )
+                    response = await client.post(
+                        "/reservations",
+                        content=payload,
+                        headers={"content-type": "application/json"},
+                    )
+                    assert response.status_code == 422, (value, field, response.text)
+                    assert response.json()["detail"][0]["type"]
+            response = await client.post(
+                "/reservations",
+                content='{"job_id": "broken",',
+                headers={"content-type": "application/json"},
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"][0]["type"] == "json_invalid"
+            assert (await client.get("/resources")).json()["free_gpus"] == 2
+        await app.state.worker.close()
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    "invalid_id",
+    [
+        "job?query",
+        "job#fragment",
+        "job/part",
+        "job%2Fpart",
+        ".",
+        "..",
+        "job\\other",
+        "a b",
+        "a\n",
+        "a" * 129,
+    ],
+)
+def test_rejects_job_ids_that_cannot_round_trip_in_http_path(invalid_id):
+    async def check():
+        app = create_app(settings())
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            response = await client.post("/reservations", json=job(invalid_id))
+            assert response.status_code == 422, response.text
+            assert (await client.get("/resources")).json()["free_gpus"] == 2
+        await app.state.worker.close()
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("field", ["gpu_count", "vram_gb", "work_units"])
+def test_boolean_gpu_or_workload_quantities_are_not_treated_as_one(field):
+    async def check():
+        app = create_app(settings())
+        async with AsyncClient(
+            transport=ASGITransport(app), base_url="http://worker"
+        ) as client:
+            payload = job(f"boolean-{field}", **{field: True})
+            response = await client.post("/reservations", json=payload)
+            assert response.status_code == 422
+            assert response.json()["detail"][0]["loc"] == ["body", field]
+            assert (await client.get("/resources")).json()["free_gpus"] == 2
+        await app.state.worker.close()
+
+    asyncio.run(check())
