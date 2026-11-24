@@ -48,9 +48,9 @@ checks; the scheduler uses internal service names over Docker's network.
 
 ## Next work for a stronger distributed evaluation
 
-1. Test overload and partial outages across processes, including worker
-   restart during execution and ambiguous reservation responses. Define
-   recovery behavior and ownership after scheduler process loss.
+1. Extend the existing reservation-race, worker-crash/restart, and ambiguous
+   response tests to sustained overload, partitions, and scheduler crashes.
+   Define durable recovery behavior and ownership after scheduler process loss.
 2. Add a scheduler queue, cancellation, admission control, and more explicit
    fairness. Measure workload latency under concurrent producers.
 3. Implement the SimPy gossip and periodic discovery policies over actual

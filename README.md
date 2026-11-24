@@ -97,13 +97,30 @@ See [ROADMAP.md](ROADMAP.md) for current scope, validation, and future work.
 GitHub Actions runs pytest on Python 3.11, 3.12, and 3.13, plus a separate
 Ruff lint and formatting check. The Docker smoke test builds the services,
 waits for health checks, then submits jobs over HTTP using both scheduling
-policies and verifies their GPU reservations are released.
+policies and verifies their GPU reservations are released. It also runs live
+reservation races and kills/restarts the T4 worker to check fail-safe job
+handling and successful placement after recovery.
 
 Install Ruff locally with `python -m pip install ruff==0.17.6`.
 Run the same checks with `python -m pytest -q`,
 `python -m ruff check torch_net tests demo.py`, and
 `python -m ruff format --check torch_net tests demo.py`. For the network
 check, start Compose as above and run `python demo.py --json`.
+
+The live tests are skipped by default; run them only against an idle test
+cluster with the default worker profiles and ports. They deliberately stop a
+worker, so do not run them against a shared or production deployment:
+
+```sh
+TORCH_LIVE_TESTS=1 python -m pytest -q tests/test_live_cluster.py
+```
+
+On PowerShell, set `$env:TORCH_LIVE_TESTS = "1"` before running the same
+pytest command and clear it afterward. Worker and scheduler state is in memory.
+If the scheduler loses contact with a running worker, it marks the job failed
+with an unknown remote outcome rather than automatically dispatching it again.
+Set `SCHEDULER_MONITOR_TIMEOUT_SECONDS` in the scheduler process environment to
+adjust its monitoring deadline (default: 3600 seconds).
 
 ## Original SimPy simulator
 

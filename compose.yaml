@@ -1,5 +1,5 @@
 # CPU-only, simulated GPU capacity. No NVIDIA runtime or physical GPU is needed.
-# All four APIs run the same Docker image, selected by APP_MODULE.
+# The scheduler has its own image; the three workers share a worker image.
 services:
   scheduler:
     build:
