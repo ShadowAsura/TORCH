@@ -243,3 +243,24 @@ def test_missing_workers_fail_after_bounded_retries():
             max_retries=2,
         )
     )
+
+
+def test_unsupported_policy_does_not_register_or_dispatch_job():
+    async def scenario(client, apps):
+        response = await client.post("/jobs", json=job("unsupported", policy="gossip"))
+        assert response.status_code == 422
+        assert "unknown policy" in response.json()["detail"]
+        assert (await client.get("/jobs/unsupported")).status_code == 404
+
+        metrics = (await client.get("/metrics")).json()
+        assert metrics["jobs_submitted"] == 0
+        assert metrics["worker_state_queries"] == 0
+        assert (await apps["a100"].state.worker.resources())["allocated_gpus"] == 0
+
+    asyncio.run(
+        run_with_network(
+            ["a100"],
+            {"a100": worker("a100", "A100", 80, 2)},
+            scenario,
+        )
+    )
