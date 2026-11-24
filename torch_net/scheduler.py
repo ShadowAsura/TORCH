@@ -1,6 +1,7 @@
 """Networked job coordinator; worker processes own resource reservations."""
 
 import asyncio
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -9,7 +10,13 @@ from typing import Any
 import httpx
 
 from torch_net.models import JobRequest
-from torch_net.policies import POLICIES, WorkerEndpoint, choose_workers, rank_compatible
+from torch_net.policies import (
+    POLICIES,
+    WorkerEndpoint,
+    choose_workers,
+    rank_compatible,
+    valid_resources,
+)
 
 
 class SchedulingRequest(JobRequest):
@@ -18,6 +25,10 @@ class SchedulingRequest(JobRequest):
 
 class SchedulingConfigurationError(ValueError):
     """Invalid settings should fail at startup rather than after submission."""
+
+
+class SchedulerClosedError(RuntimeError):
+    """Submissions are unavailable once the scheduler is shutting down."""
 
 
 @dataclass(frozen=True)
@@ -31,6 +42,7 @@ class SchedulerSettings:
     timeout_seconds: float = 1.0
     poll_seconds: float = 0.05
     max_monitor_errors: int = 5
+    monitor_timeout_seconds: float = 3600.0
 
     @classmethod
     def from_env(cls) -> "SchedulerSettings":
@@ -61,6 +73,9 @@ class SchedulerSettings:
             timeout_seconds=float(os.getenv("SCHEDULER_REQUEST_TIMEOUT_SECONDS", "1")),
             poll_seconds=float(os.getenv("SCHEDULER_POLL_SECONDS", "0.05")),
             max_monitor_errors=int(os.getenv("SCHEDULER_MAX_MONITOR_ERRORS", "5")),
+            monitor_timeout_seconds=float(
+                os.getenv("SCHEDULER_MONITOR_TIMEOUT_SECONDS", "3600")
+            ),
         )
         settings.validate()
         return settings
@@ -74,12 +89,65 @@ class SchedulerSettings:
             )
         if self.policy not in POLICIES:
             raise SchedulingConfigurationError(f"unknown policy: {self.policy}")
-        if self.sample_size < 1 or self.max_retries < 0 or self.max_monitor_errors < 1:
-            raise SchedulingConfigurationError("invalid sample size or retry limit")
-        if min(self.retry_delay_seconds, self.timeout_seconds, self.poll_seconds) <= 0:
-            raise SchedulingConfigurationError(
-                "timeouts and retry delays must be positive"
+        if (
+            any(
+                type(value) is not int
+                for value in (
+                    self.sample_size,
+                    self.max_retries,
+                    self.max_monitor_errors,
+                    self.seed,
+                )
             )
+            or self.sample_size < 1
+            or self.max_retries < 0
+            or self.max_monitor_errors < 1
+        ):
+            raise SchedulingConfigurationError("invalid sample size or retry limit")
+        try:
+            finite = all(
+                type(value) in (int, float) and math.isfinite(value) and value > 0
+                for value in (
+                    self.retry_delay_seconds,
+                    self.timeout_seconds,
+                    self.poll_seconds,
+                    self.monitor_timeout_seconds,
+                )
+            )
+        except OverflowError:
+            finite = False
+        if not finite:
+            raise SchedulingConfigurationError(
+                "timeouts and retry delays must be finite and positive"
+            )
+        for worker in self.workers:
+            if (
+                not isinstance(worker.name, str)
+                or not worker.name.strip()
+                or worker.name != worker.name.strip()
+            ):
+                raise SchedulingConfigurationError("worker names must be nonempty")
+            try:
+                if not isinstance(worker.url, str):
+                    raise SchedulingConfigurationError("worker URLs must be strings")
+                url = httpx.URL(worker.url)
+                if (
+                    url.scheme not in ("http", "https")
+                    or not url.host
+                    or url.query
+                    or url.fragment
+                    or url.username
+                    or url.password
+                    or url.path != "/"
+                    or worker.url.endswith("/")
+                ):
+                    raise SchedulingConfigurationError(
+                        f"invalid worker URL for {worker.name!r}"
+                    )
+            except (httpx.InvalidURL, TypeError, ValueError) as exc:
+                raise SchedulingConfigurationError(
+                    f"invalid worker URL for {worker.name!r}"
+                ) from exc
 
 
 @dataclass
@@ -132,15 +200,26 @@ class Scheduler:
         self._jobs: dict[str, JobRecord] = {}
         self._tasks: set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
+        self._closed = False
         self._reservation_successes = 0
         self._reservation_rejections = 0
         self._worker_errors = 0
 
     async def close(self) -> None:
+        async with self._lock:
+            self._closed = True
         if self._tasks:
             for task in self._tasks:
                 task.cancel()
             await asyncio.gather(*self._tasks, return_exceptions=True)
+        for record in self._jobs.values():
+            if record.state not in ("completed", "failed"):
+                record.state = "failed"
+                record.reason = "scheduler stopped; worker outcome unknown"
+                if record.scheduling_latency_ms is None:
+                    record.scheduling_latency_ms = round(
+                        (time.perf_counter() - record.accepted_at) * 1000, 3
+                    )
         if self._owns_client:
             await self.client.aclose()
 
@@ -150,10 +229,12 @@ class Scheduler:
         task.add_done_callback(self._tasks.discard)
 
     async def submit(self, job: SchedulingRequest) -> tuple[dict, bool]:
-        policy = job.policy or self.settings.policy
+        policy = self.settings.policy if job.policy is None else job.policy
         if policy not in POLICIES:
             raise SchedulingConfigurationError(f"unknown policy: {policy}")
         async with self._lock:
+            if self._closed:
+                raise SchedulerClosedError("scheduler is closed")
             existing = self._jobs.get(job.job_id)
             if existing is not None:
                 if existing.request != job:
@@ -173,7 +254,7 @@ class Scheduler:
         delays = [
             r.scheduling_latency_ms
             for r in records
-            if r.scheduling_latency_ms is not None
+            if r.started_at is not None and r.scheduling_latency_ms is not None
         ]
         durations = [
             r.execution_seconds for r in records if r.execution_seconds is not None
@@ -200,10 +281,41 @@ class Scheduler:
         try:
             response = await self.client.get(f"{endpoint.url}/resources")
             response.raise_for_status()
-            return endpoint, response.json()
-        except (httpx.HTTPError, ValueError):
+            resources = response.json()
+            if (
+                not valid_resources(resources)
+                or resources.get("worker_id") != endpoint.name
+            ):
+                raise ValueError(f"invalid resource snapshot from {endpoint.name}")
+            return endpoint, resources
+        except (httpx.HTTPError, ValueError, TypeError):
             self._worker_errors += 1
             return None
+
+    @staticmethod
+    def _worker_job_state(
+        data: object, endpoint: WorkerEndpoint, record: JobRecord
+    ) -> str:
+        """Reject status for a different job, worker, or reservation."""
+        if not isinstance(data, dict):
+            raise TypeError("worker job status must be a JSON object")
+        reservation_id = data.get("reservation_id")
+        state = data.get("state")
+        if (
+            data.get("job_id") != record.request.job_id
+            or data.get("worker_id") != endpoint.name
+            or type(data.get("gpu_count")) is not int
+            or data["gpu_count"] != record.request.gpu_count
+            or not isinstance(reservation_id, str)
+            or not reservation_id
+            or (
+                record.reservation_id is not None
+                and reservation_id != record.reservation_id
+            )
+            or state not in ("reserved", "running", "completed", "failed")
+        ):
+            raise ValueError(f"invalid job status from {endpoint.name}")
+        return state
 
     async def _reserve(self, endpoint: WorkerEndpoint, record: JobRecord) -> str:
         request_body = record.request.model_dump(exclude={"policy"})
@@ -213,11 +325,16 @@ class Scheduler:
                 json=request_body,
             )
             if response.status_code in (200, 201):
-                reservation_id = response.json().get("reservation_id")
-                if not reservation_id:
-                    # The resource may now be reserved even if the reply is invalid.
+                try:
+                    data = response.json()
+                    state = self._worker_job_state(data, endpoint, record)
+                    if state == "failed":
+                        raise ValueError("worker reported a failed reservation")
+                except (TypeError, ValueError):
+                    # The worker may already hold GPUs. Reconcile before any retry.
+                    self._worker_errors += 1
                     return "uncertain"
-                record.reservation_id = reservation_id
+                record.reservation_id = data["reservation_id"]
                 return "granted"
             if response.status_code in (409, 422):
                 record.reservation_rejections += 1
@@ -225,23 +342,26 @@ class Scheduler:
                 return "rejected"
             self._worker_errors += 1
             return "uncertain"
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError, TypeError):
             self._worker_errors += 1
             return "uncertain"
 
-    async def _reconcile(self, endpoint: WorkerEndpoint, record: JobRecord) -> bool:
-        """Resolve an ambiguous reservation response before trying a new worker."""
-        try:
-            response = await self.client.get(
-                f"{endpoint.url}/jobs/{record.request.job_id}"
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data.get("state") in ("reserved", "running", "completed", "failed"):
-                record.reservation_id = data.get("reservation_id")
-                return True
-        except (httpx.HTTPError, ValueError):
-            pass
+    async def _reconcile(self, endpoint: WorkerEndpoint, record: JobRecord) -> str:
+        """After an ambiguous POST, only accept proof from the same worker."""
+        for attempt in range(self.settings.max_monitor_errors):
+            try:
+                response = await self.client.get(
+                    f"{endpoint.url}/jobs/{record.request.job_id}"
+                )
+                response.raise_for_status()
+                data = response.json()
+                state = self._worker_job_state(data, endpoint, record)
+                record.reservation_id = data["reservation_id"]
+                return state
+            except (httpx.HTTPError, ValueError, TypeError):
+                self._worker_errors += 1
+                if attempt + 1 < self.settings.max_monitor_errors:
+                    await asyncio.sleep(self.settings.retry_delay_seconds)
         # A timeout could mean the worker has reserved resources even if the
         # subsequent lookup returns 404 while the request is still in flight.
         # Never dispatch the same logical job on another worker in this case.
@@ -266,23 +386,26 @@ class Scheduler:
                 f"{endpoint.url}/jobs/{record.request.job_id}/start",
             )
             if response.status_code not in (200, 201, 202):
-                raise RuntimeError(
-                    f"worker refused to start job: HTTP {response.status_code}"
-                )
-            record.state = "running"
+                self._worker_errors += 1
         except (httpx.HTTPError, ValueError):
-            # Starting may have succeeded remotely. Reconcile by polling that
-            # worker rather than submitting the job to another worker.
-            record.state = "running"
+            # Even an error reply can follow a successful remote start.
+            self._worker_errors += 1
+
         errors = 0
+        reserved_polls = 0
+        deadline = record.started_at + self.settings.monitor_timeout_seconds
         while True:
+            if time.perf_counter() >= deadline:
+                record.reason = "worker monitoring timed out; outcome unknown"
+                record.state = "failed"
+                return
             await asyncio.sleep(self.settings.poll_seconds)
             try:
                 response = await self.client.get(
                     f"{endpoint.url}/jobs/{record.request.job_id}"
                 )
                 response.raise_for_status()
-                state = response.json().get("state")
+                state = self._worker_job_state(response.json(), endpoint, record)
                 errors = 0
                 if state == "completed":
                     record.state = state
@@ -294,12 +417,23 @@ class Scheduler:
                     record.reason = "worker reported execution failure"
                     record.state = state
                     return
+                if state == "running":
+                    record.state = state
+                    reserved_polls = 0
                 if state == "reserved":
-                    # Duplicate start is idempotent; retry after an ambiguous reply.
-                    await self.client.post(
+                    record.state = state
+                    reserved_polls += 1
+                    if reserved_polls >= self.settings.max_monitor_errors:
+                        record.reason = "worker never started; outcome unknown"
+                        record.state = "failed"
+                        return
+                    # The worker's start API is idempotent. Retry only this worker.
+                    start = await self.client.post(
                         f"{endpoint.url}/jobs/{record.request.job_id}/start"
                     )
-            except (httpx.HTTPError, ValueError):
+                    if start.status_code not in (200, 201, 202):
+                        self._worker_errors += 1
+            except (httpx.HTTPError, ValueError, TypeError):
                 self._worker_errors += 1
                 errors += 1
                 if errors >= self.settings.max_monitor_errors:
@@ -331,7 +465,11 @@ class Scheduler:
                     if result == "rejected":
                         continue
                     if result == "uncertain":
-                        await self._reconcile(endpoint, record)
+                        state = await self._reconcile(endpoint, record)
+                        if state == "failed":
+                            raise RuntimeError(
+                                "worker reported failed reservation after ambiguous reply"
+                            )
                     await self._start_and_monitor(endpoint, record)
                     return
                 # Static incompatibility is known only when all configured
@@ -352,6 +490,18 @@ class Scheduler:
                 (time.perf_counter() - record.accepted_at) * 1000, 3
             )
         except asyncio.CancelledError:
+            record.state = "failed"
+            record.reason = (
+                "scheduler stopped; worker outcome unknown"
+                if record.selected_worker
+                else (
+                    "scheduler stopped before placement; reservation outcome may be unknown"
+                )
+            )
+            if record.scheduling_latency_ms is None:
+                record.scheduling_latency_ms = round(
+                    (time.perf_counter() - record.accepted_at) * 1000, 3
+                )
             raise
         except Exception as exc:  # noqa: BLE001 - task boundary records failures
             record.state = "failed"
@@ -363,14 +513,12 @@ class Scheduler:
 
     @staticmethod
     def _could_fit(snapshot: dict, job: JobRequest) -> bool:
-        try:
-            return (
-                job.gpu_count <= int(snapshot["gpu_count"])
-                and job.vram_gb <= float(snapshot["gpu_vram_gb"])
-                and (
-                    not job.compatible_gpu_types
-                    or snapshot["gpu_type"] in job.compatible_gpu_types
-                )
+        return (
+            valid_resources(snapshot)
+            and job.gpu_count <= snapshot["gpu_count"]
+            and job.vram_gb <= snapshot["gpu_vram_gb"]
+            and (
+                not job.compatible_gpu_types
+                or snapshot["gpu_type"] in job.compatible_gpu_types
             )
-        except (TypeError, ValueError, KeyError):
-            return False
+        )

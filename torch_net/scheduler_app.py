@@ -4,10 +4,13 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from torch_net.http_errors import validation_error_handler
 from torch_net.scheduler import (
     Scheduler,
+    SchedulerClosedError,
     SchedulerSettings,
     SchedulingConfigurationError,
     SchedulingRequest,
@@ -28,6 +31,7 @@ def create_app(
         await scheduler.close()
 
     app = FastAPI(title="TORCH scheduler", version="0.1.0", lifespan=lifespan)
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.state.scheduler = scheduler
 
     @app.get("/health")
@@ -54,6 +58,8 @@ def create_app(
             record, created = await scheduler.submit(job)
         except SchedulingConfigurationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except SchedulerClosedError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return JSONResponse(status_code=202 if created else 200, content=record)
