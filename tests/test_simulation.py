@@ -54,3 +54,28 @@ def test_unknown_fault_worker_is_not_silently_ignored():
     nodes = [Node("a100", "A100", 1, 80)]
     with pytest.raises(ValueError, match="unknown worker"):
         simulate_distributed(nodes, [], Settings(), Faults(worker="missing"))
+
+
+@pytest.mark.parametrize(
+    "gpu_count,vram", [(0, 80), (1.5, 80), (1, 0), (1, float("inf"))]
+)
+def test_invalid_node_capacity(gpu_count, vram):
+    with pytest.raises(ValueError):
+        Node("a100", "A100", gpu_count, vram)
+
+
+@pytest.mark.parametrize(
+    "arrival,count,vram,runtime",
+    [
+        (-1, 1, 40, 2),
+        (float("nan"), 1, 40, 2),
+        (0, 0, 40, 2),
+        (0, 1.5, 40, 2),
+        (0, 1, -1, 2),
+        (0, 1, 40, -1),
+        (0, 1, 40, float("inf")),
+    ],
+)
+def test_invalid_workload_values(arrival, count, vram, runtime):
+    with pytest.raises(ValueError):
+        Job("invalid", arrival, count, vram, {"A100": runtime})

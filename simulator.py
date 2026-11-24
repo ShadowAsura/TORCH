@@ -2,6 +2,7 @@
 
 from collections import deque
 from dataclasses import dataclass, field
+from math import isfinite
 from statistics import mean
 
 import simpy
@@ -14,6 +15,12 @@ class Node:
     gpu_count: int
     vram_gb: int
 
+    def __post_init__(self):
+        if type(self.gpu_count) is not int or self.gpu_count < 1:
+            raise ValueError("node GPU count must be a positive integer")
+        if not isfinite(self.vram_gb) or self.vram_gb <= 0:
+            raise ValueError("node VRAM must be finite and positive")
+
 
 @dataclass(frozen=True)
 class Job:
@@ -22,6 +29,16 @@ class Job:
     gpu_count: int
     min_vram_gb: int
     runtime_by_gpu: dict[str, float]
+
+    def __post_init__(self):
+        if type(self.gpu_count) is not int or self.gpu_count < 1:
+            raise ValueError("job GPU count must be a positive integer")
+        if not isfinite(self.arrival) or self.arrival < 0:
+            raise ValueError("arrival must be finite and nonnegative")
+        if not isfinite(self.min_vram_gb) or self.min_vram_gb < 0:
+            raise ValueError("required VRAM must be finite and nonnegative")
+        if any(not isfinite(runtime) or runtime < 0 for runtime in self.runtime_by_gpu.values()):
+            raise ValueError("GPU runtimes must be finite and nonnegative")
 
 
 @dataclass(frozen=True, eq=False)
