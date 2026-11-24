@@ -2,6 +2,7 @@
 
 from collections import Counter
 from dataclasses import dataclass, field
+from math import isfinite
 from random import Random
 
 import simpy
@@ -24,6 +25,22 @@ class Settings:
     retry_interval: float = 0.25
     max_rounds: int = 1000
 
+    def __post_init__(self):
+        if self.policy not in POLICIES:
+            raise ValueError(f"unknown distributed policy: {self.policy}")
+        if type(self.seed) is not int:
+            raise ValueError("seed must be an integer")
+        for name in ("radius", "sample_size", "max_rounds"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        for name in ("update_interval", "retry_interval", "max_staleness", "latency"):
+            value = getattr(self, name)
+            if not isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and nonnegative")
+        if self.update_interval == 0 or self.retry_interval == 0:
+            raise ValueError("update_interval and retry_interval must be positive")
+
 
 @dataclass(frozen=True)
 class Faults:
@@ -31,6 +48,16 @@ class Faults:
     crash_at: float = 0
     recover_at: float | None = None
     drop_status_until: float = 0
+
+    def __post_init__(self):
+        for name in ("crash_at", "recover_at", "drop_status_until"):
+            value = getattr(self, name)
+            if value is not None and (not isfinite(value) or value < 0):
+                raise ValueError(f"{name} must be finite and nonnegative")
+        if self.worker is None and (self.crash_at or self.recover_at is not None):
+            raise ValueError("crash and recovery require a worker")
+        if self.recover_at is not None and self.recover_at <= self.crash_at:
+            raise ValueError("recover_at must follow crash_at")
 
 
 @dataclass(frozen=True)
@@ -146,6 +173,8 @@ class Traffic:
 def simulate_distributed(
     nodes: list[Node], jobs: list[Job], settings: Settings, faults: Faults = Faults()
 ) -> tuple[Simulation, Traffic]:
+    if faults.worker is not None and not any(node.name == faults.worker for node in nodes):
+        raise ValueError(f"unknown worker: {faults.worker}")
     env = simpy.Environment()
     result = Simulation(elapsed=0)
     traffic = Traffic()
