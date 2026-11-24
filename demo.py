@@ -50,6 +50,9 @@ def poll_job(client, scheduler, workers, job_id, timeout, interval):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         job = request(client, "GET", scheduler, f"/jobs/{job_id}")
+        check(job.get("job_id") == job_id, "scheduler returned the wrong job")
+        if job.get("state") == "failed":
+            raise RuntimeError(f"{job_id} failed: {job.get('reason') or job}")
         selected = job.get("selected_worker")
         check(
             not selected or selected in workers, f"unknown selected worker: {selected}"
@@ -59,7 +62,9 @@ def poll_job(client, scheduler, workers, job_id, timeout, interval):
             if selected
             else {}
         )
-        if job.get("state") == "failed" or worker_job.get("state") == "failed":
+        if selected:
+            check(worker_job.get("job_id") == job_id, "worker returned the wrong job")
+        if worker_job.get("state") == "failed":
             raise RuntimeError(f"{job_id} failed: {job.get('reason') or worker_job}")
         if job.get("state") == worker_job.get("state") == "completed":
             return job, worker_job
@@ -124,16 +129,30 @@ def run(args):
                 and len(queried) == count,
                 f"invalid policy or query count for {job_id}: {job}",
             )
-            check(worker_job.get("worker_id") == selected, "worker job mismatch")
-
-            after = request(client, "GET", workers[selected], "/resources")
             check(
-                all(
-                    after[key] == before[selected][key]
-                    for key in ("free_gpus", "allocated_gpus")
-                ),
-                f"{selected} did not release reserved GPUs",
+                selected in queried and all(name in workers for name in queried),
+                "scheduler reported an inconsistent worker selection",
             )
+            check(
+                worker_job.get("worker_id") == selected
+                and worker_job.get("gpu_count") == args.gpu_count
+                and bool(job.get("reservation_id"))
+                and job["reservation_id"] == worker_job.get("reservation_id"),
+                "worker reservation does not match the scheduled job",
+            )
+
+            after = {
+                name: request(client, "GET", url, "/resources")
+                for name, url in workers.items()
+            }
+            for name in workers:
+                check(
+                    all(
+                        after[name][key] == before[name][key]
+                        for key in ("free_gpus", "allocated_gpus")
+                    ),
+                    f"{name} did not return to its initial GPU capacity",
+                )
             results.append(
                 {
                     "job_id": job_id,
@@ -144,7 +163,7 @@ def run(args):
                     "queried_workers": queried,
                     "worker_state": worker_job["state"],
                     "free_gpus_before": before[selected]["free_gpus"],
-                    "free_gpus_after": after["free_gpus"],
+                    "free_gpus_after": after[selected]["free_gpus"],
                     "scheduling_latency_ms": job.get("scheduling_latency_ms"),
                 }
             )
