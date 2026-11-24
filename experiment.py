@@ -11,6 +11,10 @@ from simulator import Job, Node, simulate, summarize
 
 
 def make_workload(seed: int, job_count: int, arrival_rate: float) -> list[Job]:
+    if type(job_count) is not int or job_count < 0:
+        raise ValueError("job_count must be a nonnegative integer")
+    if not math.isfinite(arrival_rate) or arrival_rate <= 0:
+        raise ValueError("arrival_rate must be finite and positive")
     random = Random(seed)
     arrival = 0.0
     jobs = []
@@ -87,7 +91,10 @@ def main():
     ]
     if config.crash_node is not None and config.crash_node not in {node.name for node in nodes}:
         parser.error(f"unknown worker {config.crash_node}")
-    jobs = make_workload(config.seed, config.jobs, config.arrival_rate)
+    try:
+        jobs = make_workload(config.seed, config.jobs, config.arrival_rate)
+    except ValueError as error:
+        parser.error(str(error))
     faults = Faults(config.crash_node, config.crash_at, config.recover_at, config.drop_status_until)
     policies = ("centralized", *POLICIES) if config.policy == "all" else (config.policy,)
     reports = []
