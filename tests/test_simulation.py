@@ -1,7 +1,10 @@
+from collections import Counter
+
 import pytest
 
-from distributed import Faults, Settings, simulate_distributed
-from simulator import Job, Node, summarize
+from distributed import POLICIES, Faults, Settings, simulate_distributed
+from experiment import make_workload
+from simulator import Job, Node, simulate, summarize
 
 
 def test_interrupted_work_counts_toward_utilization_without_completions():
@@ -79,3 +82,45 @@ def test_invalid_node_capacity(gpu_count, vram):
 def test_invalid_workload_values(arrival, count, vram, runtime):
     with pytest.raises(ValueError):
         Job("invalid", arrival, count, vram, {"A100": runtime})
+
+
+@pytest.mark.parametrize("seed", [0, 17, 42])
+@pytest.mark.parametrize("policy", ["centralized", *POLICIES])
+def test_seeded_workload_preserves_capacity_and_job_accounting(seed, policy):
+    nodes = [
+        Node(f"{kind}-{i}", kind, 2, vram)
+        for kind, vram in (("L40", 48), ("A100", 80))
+        for i in range(2)
+    ]
+    jobs = make_workload(seed, 40, 3)
+    if policy == "centralized":
+        result = simulate(nodes, jobs)
+    else:
+        result, _ = simulate_distributed(
+            nodes, jobs, Settings(policy=policy, seed=seed)
+        )
+
+    # A job must be accounted for once, even when it exhausts its retry budget.
+    names = [p.job.name for p in result.placements] + [j.name for j in result.rejected]
+    assert Counter(names) == Counter(j.name for j in jobs)
+    for node in nodes:
+        events = []
+        for placement in result.placements:
+            if placement.node != node:
+                continue
+            job = placement.job
+            assert node.vram_gb >= job.min_vram_gb
+            assert placement.finish - placement.start == pytest.approx(
+                job.runtime_by_gpu[node.gpu_type]
+            )
+            assert job.arrival <= placement.start <= placement.finish <= result.elapsed
+            events.extend(
+                [(placement.start, job.gpu_count), (placement.finish, -job.gpu_count)]
+            )
+        # Release at a boundary before another job starts at the same time.
+        allocated = 0
+        for _, delta in sorted(events):
+            allocated += delta
+            assert 0 <= allocated <= node.gpu_count
+        assert allocated == 0
+    assert 0 <= summarize(nodes, result).gpu_utilization <= 1 + 1e-10
