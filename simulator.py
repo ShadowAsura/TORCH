@@ -91,7 +91,7 @@ def summarize(nodes: list[Node], result: Simulation) -> Metrics:
         for placement in placements
     )
     if not placements:
-        return Metrics(0.0, 0.0, 0.0)
+        return Metrics(0.0, 0.0, busy_gpu_time / total_capacity if total_capacity else 0.0)
     return Metrics(
         mean(placement.start - placement.job.arrival for placement in placements),
         mean(placement.finish - placement.job.arrival for placement in placements),
