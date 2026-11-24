@@ -39,5 +39,7 @@ jobs:
         run: python -m pip install ruff==0.17.6
       - name: Lint
         run: python -m ruff check torch_net tests demo.py
+      - name: Check simulator for fatal lint errors
+        run: python -m ruff check --select E9,F63,F7,F82 simulator.py distributed.py experiment.py test_scheduling.py
       - name: Check formatting
         run: python -m ruff format --check torch_net tests demo.py
