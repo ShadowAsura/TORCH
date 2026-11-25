@@ -344,11 +344,22 @@ def write_html_report(
         return f"<table><thead><tr>{header}</tr></thead><tbody>{body}</tbody></table>"
 
     sweep_rows = [summary for summary in summaries if summary["sweep"] != "baseline"]
-    images = "".join(
-        f'<figure><img src="charts/{escape(name)}" alt="{escape(name)}">'
-        f"<figcaption>{escape(name)}</figcaption></figure>"
-        for name in chart_names
-    )
+
+    def figures(names: list[str]) -> str:
+        return "".join(
+            f'<figure><img src="charts/{escape(name)}" alt="{escape(name)}">'
+            f"<figcaption>{escape(name)}</figcaption></figure>"
+            for name in names
+        )
+
+    baseline_charts = [name for name in chart_names if name.startswith("baseline_")]
+    sweep_charts = [name for name in chart_names if name.startswith("sweep_")]
+    images = figures(baseline_charts)
+    if sweep_charts:
+        images += (
+            "<details><summary>Parameter sweep charts "
+            f"({len(sweep_charts)})</summary>{figures(sweep_charts)}</details>"
+        )
     config_items = "".join(
         f"<li><code>{escape(str(key))}</code>: {cell(value)}</li>"
         for key, value in sorted(config.items())
