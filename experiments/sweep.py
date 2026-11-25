@@ -301,7 +301,13 @@ def write_sweep_charts(
     return written
 
 
-def cell(value: Any) -> str:
+def cell(value: Any, key: str = "") -> str:
+    if key == "mean_utilization":
+        return escape(f"{value:.1%}")
+    if key == "mean_traffic_bytes":
+        return escape(f"{value / 1000:,.0f}")
+    if key in ("mean_messages", "mean_rejected"):
+        return escape(f"{value:,.0f}")
     if isinstance(value, float):
         return escape(f"{value:.3f}")
     return escape(str(value))
@@ -324,14 +330,14 @@ def write_html_report(
         ("mean_utilization", "Utilization"),
         ("mean_rejected", "Rejected"),
         ("mean_messages", "Messages"),
-        ("mean_traffic_bytes", "Bytes"),
+        ("mean_traffic_bytes", "Traffic (KB)"),
     )
 
     def table(rows: list[dict]) -> str:
         header = "".join(f"<th>{escape(label)}</th>" for _, label in columns)
         body = "".join(
             "<tr>"
-            + "".join(f"<td>{cell(row[key])}</td>" for key, _ in columns)
+            + "".join(f"<td>{cell(row[key], key)}</td>" for key, _ in columns)
             + "</tr>"
             for row in rows
         )
