@@ -74,7 +74,7 @@ def test_simulation_metrics_are_deterministic_and_internally_consistent():
     assert first == second
     assert first["completed"] == tiny_setup().jobs
     assert 0 <= first["delay"] <= first["completion_time"]
-    assert first["p95_delay"] >= first["delay"]
+    assert 0 <= first["p95_delay"] <= first["p95_completion_time"]
     assert 0 < first["utilization"] <= 1
     assert first["throughput"] == pytest.approx(first["completed"] / first["makespan"])
     assert first["messages"] == sum(first["message_counts"].values())
