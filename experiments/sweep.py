@@ -306,8 +306,10 @@ def cell(value: Any, key: str = "") -> str:
         return escape(f"{value:.1%}")
     if key == "mean_traffic_bytes":
         return escape(f"{value / 1000:,.0f}")
-    if key in ("mean_messages", "mean_rejected"):
+    if key == "mean_messages":
         return escape(f"{value:,.0f}")
+    if key == "mean_rejected":
+        return escape(f"{value:,.1f}")
     if isinstance(value, float):
         return escape(f"{value:.3f}")
     return escape(str(value))
@@ -326,8 +328,8 @@ def write_html_report(
         ("mean_delay", "Delay (s)"),
         ("mean_completion_time", "Completion (s)"),
         ("mean_makespan", "Makespan (s)"),
-        ("mean_throughput", "Throughput"),
-        ("mean_utilization", "Utilization"),
+        ("mean_throughput", "Throughput (jobs/s)"),
+        ("mean_utilization", "Utilization (%)"),
         ("mean_rejected", "Rejected"),
         ("mean_messages", "Messages"),
         ("mean_traffic_bytes", "Traffic (KB)"),
