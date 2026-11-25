@@ -54,8 +54,17 @@ def test_sweep_parser_normalizes_names_and_integer_parameters():
     assert parse_sweep("sample-size=2,3") == ("sample_size", [2, 3])
     with pytest.raises(argparse.ArgumentTypeError):
         parse_sweep("radius=1.5,2")
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_sweep("interval=0.5,0.5")
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_sweep("interval=nan,0.5")
     with pytest.raises(ValueError, match="more than once"):
         combine_sweeps([("radius", [1]), ("radius", [2])])
+
+
+def test_setup_rejects_non_finite_numeric_settings():
+    with pytest.raises(ValueError, match="finite"):
+        Setup(arrival_rate=float("inf")).validate()
 
 
 def test_simulation_metrics_are_deterministic_and_internally_consistent():

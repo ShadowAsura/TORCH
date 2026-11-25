@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import time
 from collections import defaultdict
@@ -141,6 +142,10 @@ def parse_sweep(text: str) -> tuple[str, list[float | int]]:
         raise argparse.ArgumentTypeError("sweep values must be numeric") from error
     if not values:
         raise argparse.ArgumentTypeError("a sweep needs at least one value")
+    if any(not math.isfinite(value) for value in values):
+        raise argparse.ArgumentTypeError("sweep values must be finite")
+    if len(set(values)) != len(values):
+        raise argparse.ArgumentTypeError("sweep values must be unique")
     if canonical in ("radius", "sample_size"):
         if any(value != int(value) for value in values):
             raise argparse.ArgumentTypeError(f"{name} values must be integers")

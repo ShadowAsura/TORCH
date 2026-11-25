@@ -4,6 +4,7 @@ Reusable experiment execution and aggregation for seeded scheduling runs.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
@@ -66,6 +67,16 @@ class Setup:
             raise ValueError("node counts must be nonnegative")
         if self.l40_nodes + self.a100_nodes < 1:
             raise ValueError("the cluster needs at least one worker")
+        numeric = (
+            "arrival_rate",
+            "latency",
+            "interval",
+            "max_staleness",
+            "retry_interval",
+            "time_limit",
+        )
+        if any(not math.isfinite(getattr(self, name)) for name in numeric):
+            raise ValueError("experiment settings must be finite")
         if self.latency < 0:
             raise ValueError("latency must be nonnegative")
         for name in ("interval", "max_staleness", "retry_interval", "time_limit"):
