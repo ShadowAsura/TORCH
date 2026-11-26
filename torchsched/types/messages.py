@@ -67,6 +67,10 @@ class ReserveReply(Message):
     # The worker's `Status.order_key()` right after the grant. A scheduler
     # uses it to tell whether a status record already includes this grant.
     order_key: tuple[int, int] | None = None
+    # Set when not granted: the worker's current state, so the scheduler can
+    # correct a stale view instead of retrying against it. Grants leave this
+    # unset; their `order_key` is what assumptions need.
+    status: Status | None = None
 
 
 @dataclass(frozen=True, slots=True)

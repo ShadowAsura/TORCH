@@ -74,6 +74,17 @@ def test_reserve_rejects_without_changing_state():
     assert not reply.granted and "lacks free GPUs" in reply.reason
 
 
+def test_rejection_carries_current_status_and_grant_does_not():
+    worker = make_worker()
+    [grant] = sent(reserve(worker, "r1", group=0, now=1.0), ReserveReply)
+    assert grant.granted and grant.status is None
+    [reject] = sent(reserve(worker, "r2", job("j2"), group=0, now=2.0), ReserveReply)
+    assert not reject.granted
+    assert reject.status == worker.status(2.0)
+    assert reject.status.free_gpus == (0, 4)
+    assert reject.status.order_key() == (3, 1)
+
+
 def test_unspecified_group_takes_the_first_that_fits():
     worker = make_worker()
     [first] = sent(reserve(worker, "r1", job("j1")), ReserveReply)

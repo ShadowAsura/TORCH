@@ -23,6 +23,7 @@ from torchsched.types.messages import (
     ReserveRequest,
     StartReply,
     StartRequest,
+    StatusPush,
 )
 from torchsched.types.metrics import (
     JobAccepted,
@@ -348,16 +349,15 @@ class Scheduler:
             )
             actions.append(Send(sender, StartRequest(reply.reservation_id)))
         else:
-            # TODO: learn from rejections. The rejection does not change our
-            # view, so later rounds often plan against the same stale record
-            # and are rejected by the same worker again: in a 20-seed
-            # full-mesh gossip run, 93% of rejections were such repeats.
-            # Planned fix: the worker includes its current Status in the
-            # rejection, and we pass it to our dissemination component as a
-            # local StatusPush so the view is corrected right away.
             tracked.phase = _Phase.PENDING
             reason = reply.reason or "reservation rejected"
             actions.append(Observe(ReservationRejected(job_id, sender, reason)))
+            if reply.status is not None:
+                # Correct our view with the worker's current state. Without
+                # this, later rounds tend to plan against the same stale
+                # record and get rejected by the same worker again. Sent
+                # before any new round's lookup, so that lookup sees it.
+                actions.append(Send(self.ctx.node_id, StatusPush((reply.status,))))
         return actions + self._round_step_done()
 
     def _started(self, reply: StartReply) -> list[Action]:

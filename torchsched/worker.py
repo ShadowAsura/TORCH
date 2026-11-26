@@ -91,7 +91,13 @@ class Worker:
 
         group, reason = self._choose_group(job, request.group, now)
         if group is None:
-            reply = ReserveReply(request.request_id, job.job_id, False, reason=reason)
+            reply = ReserveReply(
+                request.request_id,
+                job.job_id,
+                False,
+                reason=reason,
+                status=self.status(now),
+            )
             return [Send(sender, reply)]
 
         self._free[group] -= job.gpu_count

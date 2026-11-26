@@ -168,3 +168,30 @@ def test_coordinator_view_ignores_records_that_arrive_out_of_order():
     actions = view.handle(Received("w1", StatusPush((record(version=4, free=2),))), 0.0)
     assert view.view["w1"].version == 5
     assert actions == []  # and it does not claim capacity appeared
+
+
+def test_rejection_status_corrects_the_view_before_the_next_lookup():
+    h = Harness()
+    h.submit("j1")
+    [request] = h.answer_lookup(record(version=4, free=2))
+    h.submit("j2")  # arrives mid-round, so the round ends with a new lookup
+
+    current = record(version=7, free=0)
+    reply = ReserveReply(
+        request.request_id, "j1", False, reason="lacks free GPUs", status=current
+    )
+    actions = h.feed(Received("w1", reply))
+    kinds = [type(a.msg) for a in actions if isinstance(a, Send)]
+    # The correction goes to our own dissemination, ahead of the next lookup.
+    assert kinds == [StatusPush, LookupRequest]
+    [push] = sends(actions, StatusPush)
+    assert push.to == "coordinator"
+    assert push.msg == StatusPush((current,))
+
+
+def test_rejection_without_status_sends_no_correction():
+    h = Harness()
+    h.submit("j1")
+    [request] = h.answer_lookup(record(version=4, free=2))
+    reply = ReserveReply(request.request_id, "j1", False, reason="lacks free GPUs")
+    assert not sends(h.feed(Received("w1", reply)), StatusPush)

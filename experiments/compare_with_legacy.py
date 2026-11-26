@@ -3,8 +3,8 @@ Compare the legacy global-gossip simulator with the new full-mesh gossip.
 
 Every seed generates one workload that all designs run, so differences
 between designs are paired per seed. Prints mean scheduling delay with 95%
-confidence intervals, the paired differences, and mean rejected
-reservations. Run from the repository root:
+confidence intervals, the paired differences, mean rejected
+reservations, and mean network messages. Run from the repository root:
 
     python -m experiments.compare_with_legacy --seeds 100 --out results.json
 
@@ -41,9 +41,10 @@ def legacy_cluster(l40_nodes: int, a100_nodes: int) -> list[legacy_simulator.Nod
     ]
 
 
-def run_legacy(nodes, seed: int, args) -> tuple[float, int]:
+def run_legacy(nodes, seed: int, args) -> tuple[float, int, int]:
     """
-    Mean scheduling delay and rejected reservations, legacy global gossip.
+    Mean scheduling delay, rejected reservations, and network messages for
+    legacy global gossip.
     """
     jobs = make_workload(seed, args.jobs, args.arrival_rate)
     settings = legacy_distributed.Settings(
@@ -58,12 +59,13 @@ def run_legacy(nodes, seed: int, args) -> tuple[float, int]:
     if len(result.placements) != len(jobs):
         raise RuntimeError(f"legacy seed {seed}: not every job completed")
     delay = legacy_simulator.summarize(nodes, result).mean_scheduling_delay
-    return delay, traffic.failed_reservations
+    return delay, traffic.failed_reservations, traffic.summary()["messages"]
 
 
-def run_new(nodes, seed: int, args, *, backfill: bool) -> tuple[float, int]:
+def run_new(nodes, seed: int, args, *, backfill: bool) -> tuple[float, int, int]:
     """
-    Mean scheduling delay and rejected reservations, new full-mesh gossip.
+    Mean scheduling delay, rejected reservations, and network messages for
+    the new full-mesh gossip.
     """
     specs = [NodeSpec(n.name, [GpuGroup(n.gpu_type, n.gpu_count, n.vram_gb)]) for n in nodes]
     ids = [spec.node_id for spec in specs]
@@ -97,7 +99,7 @@ def run_new(nodes, seed: int, args, *, backfill: bool) -> tuple[float, int]:
         raise RuntimeError(f"seed {seed}: not every job started")
     delay = mean(starts[job.name] - job.arrival for job in jobs)
     rejected = sum(isinstance(o.metric, ReservationRejected) for o in result.observations)
-    return delay, rejected
+    return delay, rejected, sum(result.messages.values())
 
 
 def confidence_interval(values: list[float]) -> tuple[float, float, float]:
@@ -110,11 +112,18 @@ def confidence_interval(values: list[float]) -> tuple[float, float, float]:
 
 
 def report(rows: list[dict]) -> None:
-    print(f"{'':12s}{'mean delay':>12s}   {'95% CI':18s} rejected (mean)")
+    print(
+        f"{'':12s}{'mean delay':>12s}   {'95% CI':18s} "
+        f"{'rejected':>9s} {'messages':>9s}  (means per seed)"
+    )
     for design in DESIGNS:
         center, low, high = confidence_interval([row[design] for row in rows])
         rejected = mean(row[f"{design}_rejected"] for row in rows)
-        print(f"{design:12s}{center:12.3f}   [{low:.3f}, {high:.3f}]   {rejected:.0f}")
+        messages = mean(row[f"{design}_messages"] for row in rows)
+        print(
+            f"{design:12s}{center:12.3f}   [{low:.3f}, {high:.3f}]   "
+            f"{rejected:9.0f} {messages:9.0f}"
+        )
 
     legacy_mean = mean(row["legacy"] for row in rows)
     print("\npaired differences (same workload per seed):")
@@ -152,20 +161,17 @@ def main() -> None:
     started = time.perf_counter()
     rows = []
     for seed in range(args.first_seed, args.first_seed + args.seeds):
-        legacy, legacy_rejected = run_legacy(nodes, seed, args)
-        strict, strict_rejected = run_new(nodes, seed, args, backfill=False)
-        backfill, backfill_rejected = run_new(nodes, seed, args, backfill=True)
-        rows.append(
-            dict(
-                seed=seed,
-                legacy=legacy,
-                strict=strict,
-                backfill=backfill,
-                legacy_rejected=legacy_rejected,
-                strict_rejected=strict_rejected,
-                backfill_rejected=backfill_rejected,
-            )
-        )
+        row: dict = {"seed": seed}
+        results = {
+            "legacy": run_legacy(nodes, seed, args),
+            "strict": run_new(nodes, seed, args, backfill=False),
+            "backfill": run_new(nodes, seed, args, backfill=True),
+        }
+        for design, (delay, rejected, messages) in results.items():
+            row[design] = delay
+            row[f"{design}_rejected"] = rejected
+            row[f"{design}_messages"] = messages
+        rows.append(row)
     print(f"{len(rows)} seeds in {time.perf_counter() - started:.0f} s\n")
     report(rows)
     if args.out:
