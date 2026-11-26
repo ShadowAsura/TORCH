@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from torchsched.dissemination.capacity import gained_capacity
 from torchsched.node import NodeContext
 from torchsched.types.actions import Action, Send
 from torchsched.types.events import Boot, Event, Received
@@ -69,11 +70,5 @@ class CentralizedDissemination:
             if old is not None and status.order_key() <= old.order_key():
                 continue
             self.view[status.node_id] = status
-            gained = gained or _gained_capacity(old, status)
+            gained = gained or gained_capacity(old, status)
         return [Send(self.ctx.node_id, CapacityAvailable())] if gained else []
-
-
-def _gained_capacity(old: Status | None, new: Status) -> bool:
-    if old is None or old.spec != new.spec or old.incarnation != new.incarnation:
-        return True
-    return any(n > o for n, o in zip(new.free_gpus, old.free_gpus))
