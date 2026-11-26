@@ -2,15 +2,19 @@
 Tests for first-fit placement and the centralized baseline run end to end.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
-import simulator as legacy
-from experiment import make_workload
 from torchsched.clusters import centralized
 from torchsched.placement.first_fit import FirstFit
 from torchsched.runtime.sim import Simulator
 from torchsched.types.metrics import JobAccepted, JobCompleted, JobStarted
 from torchsched.types.models import Assignment, GpuGroup, Job, NodeSpec, Status
+from torchsched.workloads import poisson_workload
+
+DATA = Path(__file__).resolve().parent / "data"
 
 # ==================================================
 # Placement policy
@@ -88,42 +92,40 @@ def timeline(result):
     }
 
 
-def legacy_cluster(l40_nodes, a100_nodes, gpus=2):
+def cluster(l40_nodes, a100_nodes, gpus=2):
+    """
+    The legacy experiments' cluster: L40 nodes first, then A100 nodes.
+    """
     return [
-        legacy.Node(f"{gpu_type.lower()}-{i + 1}", gpu_type, gpus, vram)
+        NodeSpec(f"{gpu_type.lower()}-{i + 1}", [GpuGroup(gpu_type, gpus, vram)])
         for gpu_type, count, vram in [("L40", l40_nodes, 48), ("A100", a100_nodes, 80)]
         for i in range(count)
     ]
 
 
-def convert(nodes, jobs):
-    specs = [NodeSpec(n.name, [GpuGroup(n.gpu_type, n.gpu_count, n.vram_gb)]) for n in nodes]
-    new_jobs = [
-        (Job(job.name, job.gpu_count, job.min_vram_gb, job.runtime_by_gpu), job.arrival)
-        for job in jobs
-    ]
-    return specs, new_jobs
+def workload(seed, count, rate):
+    return [(s.job, s.at) for s in poisson_workload(seed, count, rate)]
+
+
+LEGACY_TIMELINES = json.loads((DATA / "legacy_centralized_timelines.json").read_text())["data"]
 
 
 @pytest.mark.parametrize(
-    "seed,count,rate,l40,a100",
-    [(42, 100, 5.0, 6, 6), (7, 200, 2.0, 2, 2), (3, 150, 8.0, 3, 1), (11, 80, 0.5, 1, 4)],
+    "case", LEGACY_TIMELINES, ids=lambda c: f"seed{c['seed']}-{c['jobs']}jobs"
 )
-def test_strict_fifo_matches_the_legacy_centralized_baseline(seed, count, rate, l40, a100):
-    nodes = legacy_cluster(l40, a100)
-    jobs = make_workload(seed, count, rate)
-    expected = {
-        p.job.name: (p.start, p.finish, p.node.name)
-        for p in legacy.simulate(nodes, jobs).placements
-    }
-    specs, new_jobs = convert(nodes, jobs)
-    result = run_centralized(specs, new_jobs)
-    assert timeline(result) == expected
+def test_strict_fifo_matches_the_legacy_centralized_baseline(case):
+    """
+    Same start, finish and node for every job as the legacy `simulate()`,
+    recorded in tests/data by tests/data/generate_legacy_data.py.
+    """
+    specs = cluster(case["l40_nodes"], case["a100_nodes"])
+    jobs = workload(case["seed"], case["jobs"], case["arrival_rate"])
+    expected = {name: tuple(entry) for name, entry in case["timeline"].items()}
+    assert timeline(run_centralized(specs, jobs)) == expected
 
 
 def test_backfill_never_delays_this_workload_relative_to_strict_fifo():
-    nodes = legacy_cluster(2, 2)
-    specs, jobs = convert(nodes, make_workload(42, 100, 5.0))
+    specs, jobs = cluster(2, 2), workload(42, 100, 5.0)
     strict = timeline(run_centralized(specs, jobs))
     backfill = timeline(run_centralized(specs, jobs, backfill=True))
     arrival = {job.job_id: at for job, at in jobs}
@@ -153,9 +155,7 @@ def test_mixed_gpu_node_runs_jobs_on_the_right_groups():
 
 
 def test_network_latency_delays_but_never_double_books():
-    nodes = legacy_cluster(2, 2)
-    specs, jobs = convert(nodes, make_workload(5, 120, 4.0))
-    result = run_centralized(specs, jobs, latency=0.05)
+    result = run_centralized(cluster(2, 2), workload(5, 120, 4.0), latency=0.05)
     accepted = [o for o in result.observations if isinstance(o.metric, JobAccepted)]
     assert len(accepted) == len(timeline(result)) == 120
     # Coordinator-side assumptions keep it from overbooking a stale view.

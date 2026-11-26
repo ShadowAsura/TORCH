@@ -2,13 +2,22 @@
 
 ## `compare_with_legacy.py`
 
-Runs the legacy simulator's global gossip and the new full-mesh gossip
-(strict FIFO and backfill placement, ring forwarding) on the same seeded
-workloads, and reports per-design means and per-seed paired differences.
+Runs the new full-mesh gossip (strict FIFO and backfill placement, ring
+forwarding) on seeded workloads and compares it with the legacy simulator's
+global gossip on the same workloads. It reports per-design means and
+per-seed paired differences.
 
 ```sh
 python -m experiments.compare_with_legacy --seeds 100 --out results.json
 ```
+
+No legacy code runs here. Legacy results for seeds 0–99 are stored in
+[`data/legacy_global_gossip.json`](data/legacy_global_gossip.json), together
+with the settings and the commit they came from. The script refuses
+settings that differ from the recorded ones. To record a different setup,
+run `python -m experiments.record_legacy_baseline` with the same arguments.
+That needs the legacy modules, so after they are deleted, check out the
+recorded commit first.
 
 Runs are deterministic: the same code and arguments give identical numbers,
 so any change in the table below comes from a code change.
@@ -31,7 +40,7 @@ in seconds, with a 95% confidence interval.
 | Legacy (`distributed.py`, global gossip) | per job, no queue | 4.753 | [4.536, 4.969] | 760 | 13,753 |
 | `807785d` gossip + ring forwarding | strict FIFO | 4.895 | [4.677, 5.114] | 1,072 | 13,445 |
 | | backfill | 4.757 | [4.551, 4.963] | 981 | 13,085 |
-| _(next commit)_ rejections carry worker status | strict FIFO | 4.886 | [4.631, 5.141] | 60 | 12,921 |
+| `77502f2` rejections carry worker status | strict FIFO | 4.886 | [4.631, 5.141] | 60 | 12,921 |
 | | backfill | 4.638 | [4.411, 4.865] | 55 | 12,387 |
 
 Paired differences against legacy (same workload per seed):
@@ -40,7 +49,7 @@ Paired differences against legacy (same workload per seed):
 | --- | --- | --- | --- | --- |
 | `807785d` | strict FIFO | +0.142 s (+3.0%) | [+0.055, +0.229] | 60/100 seeds |
 | | backfill | +0.004 s (+0.1%) | [−0.084, +0.092] | 50/100 seeds |
-| _(next commit)_ | strict FIFO | +0.133 s (+2.8%) | [+0.016, +0.250] | 56/100 seeds |
+| `77502f2` | strict FIFO | +0.133 s (+2.8%) | [+0.016, +0.250] | 56/100 seeds |
 | | backfill | −0.115 s (−2.4%) | [−0.197, −0.033] | 33/100 seeds |
 
 What changed between versions:

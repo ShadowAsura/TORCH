@@ -2,11 +2,12 @@
 Tests for neighborhood layouts, gossip dissemination, and gossip clusters.
 """
 
+import json
 from collections import defaultdict
+from pathlib import Path
 
 import pytest
 
-import distributed as legacy
 from torchsched import clusters, topology
 from torchsched.dissemination.gossip import GossipDissemination
 from torchsched.membership.static import StaticMembership
@@ -31,13 +32,24 @@ from torchsched.worker import Worker
 # ==================================================
 
 
-@pytest.mark.parametrize("count,radius,seed", [(12, 1, 42), (7, 2, 3), (2, 1, 0), (1, 1, 5)])
-def test_ring_with_shortcuts_matches_the_legacy_layout(count, radius, seed):
-    ids = [f"n{i}" for i in range(count)]
-    layout = topology.ring_with_shortcuts(ids, radius=radius, seed=seed)
-    expected = legacy.neighborhoods(count, radius, seed)
+LEGACY_LAYOUTS = json.loads(
+    (Path(__file__).resolve().parent / "data" / "legacy_ring_layouts.json").read_text()
+)["data"]
+
+
+@pytest.mark.parametrize(
+    "case", LEGACY_LAYOUTS, ids=lambda c: f"{c['count']}nodes-r{c['radius']}-seed{c['seed']}"
+)
+def test_ring_with_shortcuts_matches_the_legacy_layout(case):
+    """
+    Recorded from legacy `distributed.neighborhoods` (index-based) in
+    tests/data by tests/data/generate_legacy_data.py.
+    """
+    ids = [f"n{i}" for i in range(case["count"])]
+    layout = topology.ring_with_shortcuts(ids, radius=case["radius"], seed=case["seed"])
     assert layout == {
-        ids[i]: frozenset(ids[peer] for peer in peers) for i, peers in enumerate(expected)
+        ids[i]: frozenset(ids[peer] for peer in peers)
+        for i, peers in enumerate(case["neighbors"])
     }
 
 
