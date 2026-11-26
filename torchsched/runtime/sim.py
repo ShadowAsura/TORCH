@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import count
 
+from torchsched.codec import encode
 from torchsched.node import Node
 from torchsched.types.actions import (
     Action,
@@ -59,7 +60,9 @@ class SimResult:
     observations: list[Observation] = field(default_factory=list)
     executions: list[Execution] = field(default_factory=list)  # in finish order
     messages: Counter[str] = field(default_factory=Counter)  # network messages by type
-    # TODO: count message bytes too; needs an encoder for messages.
+    # encoded size of network messages by type, as `torchsched.codec` (and
+    # so the HTTP runtime) would send them.
+    message_bytes: Counter[str] = field(default_factory=Counter)
     undeliverable: int = 0  # messages addressed to unknown nodes
 
 
@@ -142,7 +145,9 @@ class Simulator:
                     elif to == node_id:
                         self._schedule(self.now, to, Received(node_id, msg))
                     else:
-                        self.result.messages[type(msg).__name__] += 1
+                        kind = type(msg).__name__
+                        self.result.messages[kind] += 1
+                        self.result.message_bytes[kind] += len(encode(msg))
                         self._schedule(
                             self.now + self.latency, to, Received(node_id, msg)
                         )

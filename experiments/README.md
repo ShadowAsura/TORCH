@@ -33,15 +33,18 @@ Setup (the script's defaults): seeds 0–99, 100 jobs per seed, arrival rate
 gossip every 0.5 s, 3 s staleness limit, 0.25 s retry interval. Python 3.12.
 
 Means over 100 seeds. Delay is the mean scheduling delay (arrival to start)
-in seconds, with a 95% confidence interval.
+in seconds, with a 95% confidence interval. Bytes are the encoded size of
+all network messages (`torchsched.codec`). Bytes were first measured once
+the encoder existed; the `77502f2` bytes come from the next commit, which
+added the encoder without changing scheduling behavior.
 
-| Version | Placement | Delay | 95% CI | Rejected | Messages |
-| --- | --- | --- | --- | --- | --- |
-| Legacy (`distributed.py`, global gossip) | per job, no queue | 4.753 | [4.536, 4.969] | 760 | 13,753 |
-| `807785d` gossip + ring forwarding | strict FIFO | 4.895 | [4.677, 5.114] | 1,072 | 13,445 |
-| | backfill | 4.757 | [4.551, 4.963] | 981 | 13,085 |
-| `77502f2` rejections carry worker status | strict FIFO | 4.886 | [4.631, 5.141] | 60 | 12,921 |
-| | backfill | 4.638 | [4.411, 4.865] | 55 | 12,387 |
+| Version | Placement | Delay | 95% CI | Rejected | Messages | KB |
+| --- | --- | --- | --- | --- | --- | --- |
+| Legacy (`distributed.py`, global gossip) | per job, no queue | 4.753 | [4.536, 4.969] | 760 | 13,753 | — |
+| `807785d` gossip + ring forwarding | strict FIFO | 4.895 | [4.677, 5.114] | 1,072 | 13,445 | — |
+| | backfill | 4.757 | [4.551, 4.963] | 981 | 13,085 | — |
+| `77502f2` rejections carry worker status | strict FIFO | 4.886 | [4.631, 5.141] | 60 | 12,921 | 3,470 |
+| | backfill | 4.638 | [4.411, 4.865] | 55 | 12,387 | 3,357 |
 
 Paired differences against legacy (same workload per seed):
 
@@ -63,6 +66,19 @@ What changed between versions:
   each rejection corrects the view immediately. Rejections fell by about
   95%, messages by about 5%, and backfill became significantly faster than
   legacy.
+
+Where the bytes go (seed 42, backfill, 12,888 messages, 3.5 MB):
+
+| Message | Share of messages | Share of bytes | Average size |
+| --- | --- | --- | --- |
+| `ForwardJob` | 89% | 72% | 218 B |
+| `StatusPush` | 9% | 26% | 770 B |
+| everything else | 2% | 2% | 62–324 B |
+
+Two likely improvements follow from this. Waiting jobs lap the ring every
+retry interval, which on a full mesh adds traffic without helping
+placement, because every scheduler already sees the same view. And each
+status record carries its node's full `NodeSpec`.
 
 ### Caveats
 

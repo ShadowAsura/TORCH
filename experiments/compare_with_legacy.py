@@ -4,7 +4,8 @@ Compare the new full-mesh gossip against the recorded legacy global gossip.
 Every seed generates one workload that all designs run, so differences
 between designs are paired per seed. Prints mean scheduling delay with 95%
 confidence intervals, the paired differences, mean rejected reservations,
-and mean network messages. Run from the repository root:
+and mean network messages and bytes (bytes for the new code only: legacy
+had no message encoding). Run from the repository root:
 
     python -m experiments.compare_with_legacy --seeds 100 --out results.json
 
@@ -75,10 +76,10 @@ def cluster(l40_nodes: int, a100_nodes: int) -> list[NodeSpec]:
     ]
 
 
-def run_new(seed: int, args, *, backfill: bool) -> tuple[float, int, int]:
+def run_new(seed: int, args, *, backfill: bool) -> tuple[float, int, int, int]:
     """
-    Mean scheduling delay, rejected reservations, and network messages for
-    the new full-mesh gossip with ring forwarding.
+    Mean scheduling delay, rejected reservations, network messages, and
+    network bytes for the new full-mesh gossip with ring forwarding.
     """
     specs = cluster(args.l40_nodes, args.a100_nodes)
     ids = [spec.node_id for spec in specs]
@@ -108,7 +109,12 @@ def run_new(seed: int, args, *, backfill: bool) -> tuple[float, int, int]:
         raise RuntimeError(f"seed {seed}: not every job started")
     delay = mean(starts[s.job.job_id] - s.at for s in workload)
     rejected = sum(isinstance(o.metric, ReservationRejected) for o in result.observations)
-    return delay, rejected, sum(result.messages.values())
+    return (
+        delay,
+        rejected,
+        sum(result.messages.values()),
+        sum(result.message_bytes.values()),
+    )
 
 
 def load_baseline(args, parser: argparse.ArgumentParser) -> dict[int, dict]:
@@ -145,15 +151,17 @@ def confidence_interval(values: list[float]) -> tuple[float, float, float]:
 def report(rows: list[dict]) -> None:
     print(
         f"{'':12s}{'mean delay':>12s}   {'95% CI':18s} "
-        f"{'rejected':>9s} {'messages':>9s}  (means per seed)"
+        f"{'rejected':>9s} {'messages':>9s} {'KB':>8s}  (means per seed)"
     )
     for design in DESIGNS:
         center, low, high = confidence_interval([row[design] for row in rows])
         rejected = mean(row[f"{design}_rejected"] for row in rows)
         messages = mean(row[f"{design}_messages"] for row in rows)
+        sizes = [row[f"{design}_bytes"] for row in rows]
+        kilobytes = "—" if None in sizes else f"{mean(sizes) / 1000:.0f}"
         print(
             f"{design:12s}{center:12.3f}   [{low:.3f}, {high:.3f}]   "
-            f"{rejected:9.0f} {messages:9.0f}"
+            f"{rejected:9.0f} {messages:9.0f} {kilobytes:>8s}"
         )
 
     legacy_mean = mean(row["legacy"] for row in rows)
@@ -189,14 +197,16 @@ def main() -> None:
                 legacy[seed]["delay"],
                 legacy[seed]["rejected"],
                 legacy[seed]["messages"],
+                None,
             ),
             "strict": run_new(seed, args, backfill=False),
             "backfill": run_new(seed, args, backfill=True),
         }
-        for design, (delay, rejected, messages) in results.items():
+        for design, (delay, rejected, messages, size) in results.items():
             row[design] = delay
             row[f"{design}_rejected"] = rejected
             row[f"{design}_messages"] = messages
+            row[f"{design}_bytes"] = size
         rows.append(row)
     print(f"{len(rows)} seeds in {time.perf_counter() - started:.0f} s\n")
     report(rows)
