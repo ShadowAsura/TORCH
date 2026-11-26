@@ -64,6 +64,9 @@ class ReserveReply(Message):
     reservation_id: ReservationId | None = None
     group: GroupIndex | None = None  # the group actually reserved, when granted
     reason: str | None = None  # set when not granted
+    # The worker's `Status.order_key()` right after the grant. A scheduler
+    # uses it to tell whether a status record already includes this grant.
+    order_key: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +90,8 @@ class JobFinished(Message):
     job_id: JobId
     reservation_id: ReservationId
     succeeded: bool
+    # The worker's `Status.order_key()` right after releasing the GPUs.
+    order_key: tuple[int, int]
     reason: str | None = None
 
 
@@ -123,6 +128,29 @@ class StatusPush(Message):
     """
 
     statuses: tuple[Status, ...]
+
+
+# ==================================================
+# Local notifications: between components of one node
+# ==================================================
+
+
+@dataclass(frozen=True, slots=True)
+class StatusChanged(Message):
+    """
+    Worker -> dissemination: this node's free GPUs changed.
+    """
+
+    status: Status
+
+
+@dataclass(frozen=True, slots=True)
+class CapacityAvailable(Message):
+    """
+    Dissemination -> scheduler: the view gained free capacity (a new node,
+    a restarted node, or more free GPUs), so another placement round may
+    succeed.
+    """
 
 
 # ==================================================

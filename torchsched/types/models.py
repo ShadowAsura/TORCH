@@ -138,6 +138,7 @@ class Status:
     spec: NodeSpec
     free_gpus: tuple[int, ...]
     incarnation: int
+    # acts like an entry in a vector clock (since only we will increment it)
     version: int
     observed_at: float
 

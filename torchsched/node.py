@@ -76,6 +76,10 @@ class Node:
     """
     Route each event to the component that owns it.
 
+    Every node has membership and dissemination. A node without GPU groups
+    has no worker, and a node that never receives jobs (for example, a
+    worker in the centralized baseline) has no scheduler.
+
     * Boot goes to every component, in construction order.
     * `Received(msg)` goes to the component whose `accepts` contains
       `type(msg)`. Other events are routed by their own type the same way.
@@ -91,7 +95,7 @@ class Node:
         *,
         membership: MembershipRole,
         dissemination: DisseminationRole,
-        scheduler: SchedulerRole,
+        scheduler: SchedulerRole | None = None,
         worker: WorkerRole | None = None,
     ):
         self.ctx = ctx
