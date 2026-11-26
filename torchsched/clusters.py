@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 
 from torchsched.dissemination.centralized import CentralizedDissemination
 from torchsched.dissemination.gossip import GossipDissemination
-from torchsched.interfaces.policies import PlacementPolicy
+from torchsched.interfaces.policies import ForwardingPolicy, PlacementPolicy
 from torchsched.membership.static import StaticMembership
 from torchsched.node import Node, NodeContext
 from torchsched.scheduler import Scheduler
@@ -60,6 +60,7 @@ def gossip(
     *,
     neighborhoods: Mapping[NodeId, frozenset[NodeId]],
     placement: PlacementPolicy,
+    forwarding: ForwardingPolicy | None,
     interval: float,
     max_staleness: float,
     retry_interval: float,
@@ -73,8 +74,10 @@ def gossip(
     `topology.ring_with_shortcuts` or `topology.full_mesh`. Jobs may be
     submitted to any node, which places them using its own view.
 
-    TODO: forward jobs to other schedulers. Until then, a job waits at the
-    node it was submitted to, so a job that no GPU in that node's
+    A job that no node in a scheduler's view has room for is handed to the
+    next scheduler chosen by `forwarding`, for example
+    `forwarding.ring.RingForwarding`. With `forwarding=None`, a job stays
+    at the node it was submitted to, so a job that nothing in that node's
     neighborhood can run waits forever.
     """
     missing = {spec.node_id for spec in workers} - set(neighborhoods)
@@ -92,7 +95,10 @@ def gossip(
                     ctx, interval=interval, max_staleness=max_staleness
                 ),
                 scheduler=Scheduler(
-                    ctx, placement=placement, retry_interval=retry_interval
+                    ctx,
+                    placement=placement,
+                    forwarding=forwarding,
+                    retry_interval=retry_interval,
                 ),
             )
         )

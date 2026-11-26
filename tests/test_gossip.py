@@ -228,6 +228,7 @@ def run(neighborhoods, jobs, *, latency=0.02, seed=1, backfill=False):
             MIXED_CLUSTER,
             neighborhoods=neighborhoods,
             placement=FirstFit(backfill=backfill),
+            forwarding=None,
             interval=0.5,
             max_staleness=3.0,
             retry_interval=0.25,

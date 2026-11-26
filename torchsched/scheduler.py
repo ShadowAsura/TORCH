@@ -9,12 +9,13 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import ClassVar
 
-from torchsched.interfaces.policies import PlacementPolicy
+from torchsched.interfaces.policies import ForwardingPolicy, PlacementPolicy
 from torchsched.node import NodeContext
 from torchsched.types.actions import Action, Observe, Send, SetTimer
 from torchsched.types.events import Event, JobSubmitted, Received, TimerFired
 from torchsched.types.messages import (
     CapacityAvailable,
+    ForwardJob,
     JobFinished,
     LookupReply,
     LookupRequest,
@@ -27,11 +28,13 @@ from torchsched.types.metrics import (
     JobAccepted,
     JobCompleted,
     JobFailed,
+    JobForwarded,
     JobStarted,
     PlacementRetried,
     ReservationRejected,
 )
 from torchsched.types.models import (
+    Assignment,
     GpuType,
     GroupIndex,
     Job,
@@ -58,6 +61,8 @@ class _Job:
     group: GroupIndex | None = None
     gpu_type: GpuType | None = None
     reservation_id: ReservationId | None = None
+    # Schedulers that tried this job on its current lap, ending with this one.
+    visited: tuple[NodeId, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,11 @@ class Scheduler:
     fails, or (if `retry_interval` is set) a retry timer fires while jobs
     are still waiting.
 
+    With a `forwarding` policy, a job that nothing in this node's view has
+    room for is handed to another scheduler, which then owns it. When the
+    policy has no next hop (the lap is over), the job waits here and starts
+    a new lap when the retry timer fires.
+
     Views can lag behind the scheduler's own actions. So, we store
     the reservations and releases we initiated, and apply those as assumptions
     on top of views that predate them
@@ -100,6 +110,7 @@ class Scheduler:
     accepts: ClassVar[frozenset[type]] = frozenset(
         {
             JobSubmitted,
+            ForwardJob,
             CapacityAvailable,
             LookupReply,
             ReserveReply,
@@ -113,12 +124,14 @@ class Scheduler:
         ctx: NodeContext,
         *,
         placement: PlacementPolicy,
+        forwarding: ForwardingPolicy | None = None,
         retry_interval: float | None = None,
     ):
         if retry_interval is not None and retry_interval <= 0:
             raise ValueError("retry_interval must be positive")
         self.ctx = ctx
         self.placement = placement
+        self.forwarding = forwarding
         self.retry_interval = retry_interval
         self._jobs: dict[JobId, _Job] = {}
         self._by_reservation: dict[ReservationId, JobId] = {}
@@ -134,6 +147,8 @@ class Scheduler:
         match event:
             case JobSubmitted(job):
                 return self._submitted(job)
+            case Received(_, ForwardJob(job, visited)):
+                return self._received_forward(job, visited)
             case Received(_, CapacityAvailable()):
                 return self._request_round()
             case Received(_, LookupReply() as reply):
@@ -189,10 +204,13 @@ class Scheduler:
 
     def _retry(self) -> list[Action]:
         self._retry_armed = False
-        actions: list[Action] = [
-            Observe(PlacementRetried(j.job.job_id, "no capacity found"))
-            for j in self._pending()
-        ]
+        actions: list[Action] = []
+        for tracked in self._pending():
+            # Waiting ends the lap; if still unplaceable, start a new one.
+            tracked.visited = (self.ctx.node_id,)
+            actions.append(
+                Observe(PlacementRetried(tracked.job.job_id, "no capacity found"))
+            )
         return actions + self._request_round()
 
     # ==================================================
@@ -202,9 +220,21 @@ class Scheduler:
     def _submitted(self, job: Job) -> list[Action]:
         if job.job_id in self._jobs:
             return []
-        self._jobs[job.job_id] = _Job(job, self._next_seq)
-        self._next_seq += 1
+        self._track(job, (self.ctx.node_id,))
         return [Observe(JobAccepted(job.job_id)), *self._request_round()]
+
+    def _received_forward(
+        self, job: Job, visited: tuple[NodeId, ...]
+    ) -> list[Action]:
+        # Not counted as accepted again: it entered the system elsewhere.
+        if job.job_id in self._jobs:
+            return []
+        self._track(job, (*visited, self.ctx.node_id))
+        return self._request_round()
+
+    def _track(self, job: Job, visited: tuple[NodeId, ...]) -> None:
+        self._jobs[job.job_id] = _Job(job, self._next_seq, visited=visited)
+        self._next_seq += 1
 
     def _plan(self, reply: LookupReply, now: float) -> list[Action]:
         if reply.lookup_id != self._lookup_id:
@@ -226,7 +256,45 @@ class Scheduler:
             self._reserving[request_id] = assignment.job_id
             request = ReserveRequest(request_id, tracked.job, assignment.group)
             actions.append(Send(assignment.node_id, request))
+        if self.forwarding is not None:
+            actions += self._forward_unplaceable(pending, plan, candidates)
         return actions + self._round_step_done()
+
+    def _forward_unplaceable(
+        self,
+        pending: list[_Job],
+        plan: list[Assignment],
+        candidates: list[Status],
+    ) -> list[Action]:
+        """
+        Hand off pending jobs that no candidate has room for after `plan`.
+
+        A job that fits but was left out (for example, behind a blocked
+        head under strict FIFO) stays: a later round here can place it.
+        """
+        assert self.forwarding is not None
+        free = {status.node_id: list(status.free_gpus) for status in candidates}
+        for assignment in plan:
+            job = self._jobs[assignment.job_id].job
+            free[assignment.node_id][assignment.group] -= job.gpu_count
+        assigned = {assignment.job_id for assignment in plan}
+        neighbors = self.ctx.neighbors()
+
+        actions: list[Action] = []
+        for tracked in pending:
+            job = tracked.job
+            if job.job_id in assigned or _has_room(job, candidates, free):
+                continue
+            hop = self.forwarding.next_hop(job, tracked.visited, neighbors)
+            if hop is None:
+                continue  # lap over; wait for the retry timer
+            del self._jobs[job.job_id]
+            actions.append(Send(hop, ForwardJob(job, tracked.visited)))
+            actions.append(Observe(JobForwarded(job.job_id, hop)))
+        if actions:
+            # Forwarding a blocked head can unblock the jobs behind it.
+            self._dirty = True
+        return actions
 
     def _apply_assumed(self, candidates: tuple[Status, ...]) -> list[Status]:
         latest = {status.node_id: status.order_key() for status in candidates}
@@ -280,6 +348,13 @@ class Scheduler:
             )
             actions.append(Send(sender, StartRequest(reply.reservation_id)))
         else:
+            # TODO: learn from rejections. The rejection does not change our
+            # view, so later rounds often plan against the same stale record
+            # and are rejected by the same worker again: in a 20-seed
+            # full-mesh gossip run, 93% of rejections were such repeats.
+            # Planned fix: the worker includes its current Status in the
+            # rejection, and we pass it to our dissemination component as a
+            # local StatusPush so the view is corrected right away.
             tracked.phase = _Phase.PENDING
             reason = reply.reason or "reservation rejected"
             actions.append(Observe(ReservationRejected(job_id, sender, reason)))
@@ -330,3 +405,11 @@ class Scheduler:
     def _new_id(self, kind: str) -> str:
         self._next_id += 1
         return f"{self.ctx.node_id}:{self.ctx.incarnation}:{kind}-{self._next_id}"
+
+
+def _has_room(job: Job, candidates: list[Status], free: dict[NodeId, list[int]]) -> bool:
+    return any(
+        job.can_use(group) and free[status.node_id][index] >= job.gpu_count
+        for status in candidates
+        for index, group in enumerate(status.spec.gpus)
+    )

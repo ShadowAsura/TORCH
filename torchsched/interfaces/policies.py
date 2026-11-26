@@ -39,7 +39,9 @@ class ForwardingPolicy(Protocol):
     """
     Choose the next scheduler for a job this node cannot place.
 
-    Returning `None` keeps the job here to retry later.
+    `visited` lists the schedulers that tried the job on its current lap,
+    in order, ending with this node. Returning `None` ends the lap: the job
+    stays here and starts a new lap after the retry timer.
     """
 
     name: str
