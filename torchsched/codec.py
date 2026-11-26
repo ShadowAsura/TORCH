@@ -26,7 +26,7 @@ def encode(msg: Message) -> bytes:
         type(msg).__name__
     ) is not type(msg):
         raise TypeError(f"not a registered message: {msg!r}")
-    payload = {"type": type(msg).__name__, "body": _to_data(msg)}
+    payload = {"type": type(msg).__name__, "body": to_data(msg)}
     return json.dumps(payload, separators=(",", ":"), allow_nan=False).encode()
 
 
@@ -48,22 +48,25 @@ def decode(data: bytes) -> Message:
     if cls is None:
         raise ValueError(f"unknown message type {payload['type']!r}")
     try:
-        return _from_data(cls, payload["body"])
+        return from_data(cls, payload["body"])
     except (TypeError, ValueError) as error:
         raise ValueError(f"invalid {cls.__name__}: {error}") from None
 
 
-def _to_data(value: Any) -> Any:
+def to_data(value: Any) -> Any:
+    """
+    A JSON-compatible form of a message, model, or plain value.
+    """
     if value is None or isinstance(value, _PRIMITIVES):
         return value
     if is_dataclass(value) and not isinstance(value, type):
-        return {f.name: _to_data(getattr(value, f.name)) for f in fields(value)}
+        return {f.name: to_data(getattr(value, f.name)) for f in fields(value)}
     if isinstance(value, tuple):
-        return [_to_data(item) for item in value]
+        return [to_data(item) for item in value]
     if isinstance(value, collections.abc.Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("mapping keys must be strings")
-        return {key: _to_data(item) for key, item in value.items()}
+        return {key: to_data(item) for key, item in value.items()}
     raise TypeError(f"cannot encode {type(value).__name__}")
 
 
@@ -72,7 +75,12 @@ def _hints(cls: type) -> dict[str, Any]:
     return typing.get_type_hints(cls)
 
 
-def _from_data(tp: Any, data: Any) -> Any:
+def from_data(tp: Any, data: Any) -> Any:
+    """
+    Rebuild a value of type `tp` from `to_data` output.
+
+    Raises TypeError or ValueError for data that does not fit `tp`.
+    """
     origin, args = typing.get_origin(tp), typing.get_args(tp)
 
     if tp is type(None):
@@ -85,7 +93,7 @@ def _from_data(tp: Any, data: Any) -> Any:
         options = [arg for arg in args if arg is not type(None)]
         if len(options) != 1:
             raise TypeError(f"unsupported union {tp}")
-        return _from_data(options[0], data)
+        return from_data(options[0], data)
     if tp is bool:
         if not isinstance(data, bool):
             raise TypeError(f"expected a boolean, got {data!r}")
@@ -106,16 +114,16 @@ def _from_data(tp: Any, data: Any) -> Any:
         if not isinstance(data, list):
             raise TypeError(f"expected an array, got {data!r}")
         if len(args) == 2 and args[1] is Ellipsis:
-            return tuple(_from_data(args[0], item) for item in data)
+            return tuple(from_data(args[0], item) for item in data)
         if len(data) != len(args):
             raise TypeError(f"expected {len(args)} items, got {len(data)}")
-        return tuple(_from_data(arg, item) for arg, item in zip(args, data))
+        return tuple(from_data(arg, item) for arg, item in zip(args, data))
     if origin in (collections.abc.Mapping, dict):
         if not isinstance(data, dict):
             raise TypeError(f"expected an object, got {data!r}")
         key_type, value_type = args
         return {
-            _from_data(key_type, key): _from_data(value_type, item)
+            from_data(key_type, key): from_data(value_type, item)
             for key, item in data.items()
         }
     if isinstance(tp, type) and is_dataclass(tp):
@@ -128,5 +136,5 @@ def _from_data(tp: Any, data: Any) -> Any:
             raise TypeError(
                 f"{tp.__name__} fields: missing {sorted(missing)}, unexpected {sorted(extra)}"
             )
-        return tp(**{name: _from_data(hints[name], data[name]) for name in names})
+        return tp(**{name: from_data(hints[name], data[name]) for name in names})
     raise TypeError(f"cannot decode type {tp}")

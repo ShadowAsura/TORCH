@@ -318,11 +318,18 @@ FORBIDDEN_MODULES = {
     "uvicorn",
 }
 
+# Runtimes that drive nodes over real I/O. They are the only modules allowed
+# to break the rule; nothing in the core may import them.
+IO_RUNTIMES = {"runtime/http.py"}
+
 
 def test_core_does_not_import_io_or_global_randomness():
     core = Path(__file__).resolve().parents[1] / "torchsched"
     violations = []
     for path in sorted(core.rglob("*.py")):
+        relative = path.relative_to(core).as_posix()
+        if relative in IO_RUNTIMES:
+            continue
         for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
             if isinstance(node, ast.Import):
                 modules = [alias.name for alias in node.names]
@@ -340,4 +347,23 @@ def test_core_does_not_import_io_or_global_randomness():
             for module in modules:
                 if module.split(".")[0] in FORBIDDEN_MODULES:
                     violations.append(f"{path.name}: imports {module}")
+    assert not violations, violations
+
+
+def test_only_runtimes_import_io_runtimes():
+    core = Path(__file__).resolve().parents[1] / "torchsched"
+    runtime_modules = {
+        "torchsched." + name.removesuffix(".py").replace("/", ".") for name in IO_RUNTIMES
+    }
+    violations = []
+    for path in sorted(core.rglob("*.py")):
+        if path.relative_to(core).as_posix() in IO_RUNTIMES:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module] if isinstance(node, ast.ImportFrom) and node.module else []
+            )
+            violations += [f"{path.name}: imports {n}" for n in names if n in runtime_modules]
     assert not violations, violations

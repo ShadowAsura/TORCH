@@ -5,14 +5,19 @@ Builders that assemble nodes into a cluster for one scheduling design.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
+from torchsched import topology
+from torchsched.codec import from_data
 from torchsched.dissemination.centralized import CentralizedDissemination
 from torchsched.dissemination.gossip import GossipDissemination
+from torchsched.forwarding.ring import RingForwarding
 from torchsched.interfaces.policies import ForwardingPolicy, PlacementPolicy
 from torchsched.membership.static import StaticMembership
 from torchsched.node import Node, NodeContext
+from torchsched.placement.first_fit import FirstFit
 from torchsched.scheduler import Scheduler
-from torchsched.types.models import NodeId, NodeSpec
+from torchsched.types.models import GpuGroup, NodeId, NodeSpec
 from torchsched.worker import Worker
 
 
@@ -103,3 +108,82 @@ def gossip(
             )
         )
     return nodes
+
+
+def from_config(config: Mapping[str, Any]) -> list[Node]:
+    """
+    Build every node of a cluster from a JSON-style config.
+
+    ```
+    {
+      "design": "centralized" | "gossip",
+      "seed": 0,                              # optional
+      "lease_seconds": 30,                    # optional
+      "placement": {"backfill": false},       # optional
+      "workers": [
+        {"id": "w1", "gpus": [{"gpu_type": "A100", "count": 2, "vram_gb": 80}]}
+      ],
+      "centralized": {"coordinator": "coordinator"},   # optional
+      "gossip": {
+        "interval": 0.5, "max_staleness": 3.0, "retry_interval": 0.25,
+        "topology": "ring" | "full",   # optional, default "ring"
+        "radius": 1,                   # optional, ring only
+        "forwarding": "ring" | null    # optional, default "ring"
+      }
+    }
+    ```
+
+    The ring order is the order of `workers`. Other keys (for example, a
+    runtime's addresses) are ignored, so one file can configure every
+    process of a deployment.
+    """
+    design = config.get("design")
+    seed = int(config.get("seed", 0))
+    lease_seconds = float(config.get("lease_seconds", 30.0))
+    placement = FirstFit(backfill=bool(config.get("placement", {}).get("backfill", False)))
+    workers = [
+        NodeSpec(
+            str(worker["id"]),
+            [from_data(GpuGroup, group) for group in worker.get("gpus", [])],
+        )
+        for worker in config.get("workers", [])
+    ]
+    if not workers:
+        raise ValueError("config needs at least one worker")
+
+    if design == "centralized":
+        coordinator = config.get("centralized", {}).get("coordinator", "coordinator")
+        return centralized(
+            workers,
+            placement=placement,
+            coordinator=coordinator,
+            seed=seed,
+            lease_seconds=lease_seconds,
+        )
+    if design == "gossip":
+        options = config.get("gossip", {})
+        ids = [spec.node_id for spec in workers]
+        layout = options.get("topology", "ring")
+        if layout == "ring":
+            neighborhoods = topology.ring_with_shortcuts(
+                ids, radius=int(options.get("radius", 1)), seed=seed
+            )
+        elif layout == "full":
+            neighborhoods = topology.full_mesh(ids)
+        else:
+            raise ValueError(f"unknown gossip topology {layout!r}")
+        forwarding_name = options.get("forwarding", "ring")
+        if forwarding_name not in ("ring", None):
+            raise ValueError(f"unknown forwarding policy {forwarding_name!r}")
+        return gossip(
+            workers,
+            neighborhoods=neighborhoods,
+            placement=placement,
+            forwarding=RingForwarding(ids) if forwarding_name == "ring" else None,
+            interval=float(options["interval"]),
+            max_staleness=float(options["max_staleness"]),
+            retry_interval=float(options["retry_interval"]),
+            seed=seed,
+            lease_seconds=lease_seconds,
+        )
+    raise ValueError(f"unknown design {design!r}")
