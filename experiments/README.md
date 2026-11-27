@@ -212,3 +212,57 @@ The _(next commit)_ rows add two things:
   round trip later for jobs placed on another node.
 - The confidence intervals use a normal approximation and are not corrected
   for multiple comparisons.
+
+## `faults.py`
+
+Runs a design on the same seeded workloads with and without faults, so the
+cost of the faults is paired per seed. Setup and arguments are as for
+`compare_with_legacy.py`; placement is backfill unless `--strict`.
+
+```sh
+python -m experiments.faults --design gossip --loss 0.05
+python -m experiments.faults --design gossip --crashes 2 --downtime 5
+python -m experiments.faults --design sampling --crashes 2
+```
+
+`--loss P` drops every message with probability P, and
+`--status-loss-until T` drops status pushes until time T. `--crashes N`
+crashes N nodes, chosen per seed, at random times while jobs arrive; with
+`--downtime D` each restarts after D seconds, otherwise it stays down.
+
+### Fault results
+
+_(next commit)_, 100 seeds, backfill. Columns are means per seed with
+faults; delay and completion time are paired differences against the same
+seed without faults, over jobs that completed in both runs. Lost jobs were
+held by, or submitted to, a crashed scheduler. Wasted is GPU-seconds spent
+on runs that were interrupted or duplicated. No job completed twice in any
+run.
+
+| Design | Faults | Completed | Lost | Interrupted | Abandoned | Wasted | Delay | Completion time | Messages |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gossip | 5% loss | 100 | 0 | 0.1 | 0 | 1.7 | +0.52 s (+11%) | +0.53 s (+5%) | 23,447 → 11,995 |
+| | 2 crashes, 5 s down | 92.1 | 7.9 | 0.8 | 23 | 11.3 | +0.62 s (+14%) | +0.73 s (+7%) | 23,447 → 17,185 |
+| | 2 crashes, permanent | 83.1 | 12.8 | 0.8 | 8,533 | 11.1 | +10.2 s (+225%) | +10.4 s (+100%) | 23,447 → 132,105 |
+| periodic | 5% loss | 100 | 0 | 0.4 | 0 | 3.3 | +0.58 s (+13%) | +0.60 s (+6%) | 25,368 → 13,712 |
+| | 2 crashes, 5 s down | 92.2 | 7.8 | 1.1 | 24 | 11.2 | +0.68 s (+15%) | +0.80 s (+8%) | 25,368 → 19,259 |
+| | 2 crashes, permanent | 83.3 | 12.8 | 1.2 | 8,147 | 11.2 | +9.8 s (+218%) | +10.1 s (+97%) | 25,368 → 282,091 |
+| sampling | 5% loss | 100 | 0 | 0.2 | 0 | 1.7 | +1.44 s (+30%) | +1.45 s (+13%) | 15,519 → 6,244 |
+| | 2 crashes, 5 s down | 91.9 | 8.1 | 0.9 | 7 | 11.4 | +0.56 s (+12%) | +0.67 s (+6%) | 15,519 → 11,195 |
+| | 2 crashes, permanent | 83.3 | 12.7 | 0.8 | 7,721 | 10.8 | +15.6 s (+326%) | +15.8 s (+148%) | 15,519 → 42,228 |
+
+What these show:
+
+- **Lost messages slow jobs but lose none.** Each lost request costs a
+  full 1 s timeout against 20 ms latency. Sampling suffers most: a lost
+  probe stalls a whole placement round until the probe timeout. Messages
+  fall, because waiting jobs lap the ring as fast as the network allows,
+  and every lost `ForwardJob` or `ForwardAck` pauses that lap for a second.
+- **Crashes lose the crashed schedulers' jobs** (about 4 per crash). Runs
+  on crashed workers are detected and rerun elsewhere, costing about 11
+  GPU-seconds per seed.
+- **A node that stays down breaks the ring.** Ring forwarding keeps handing
+  jobs to it and abandoning the handoff, so about 4% of jobs per seed
+  never run (completed plus lost is under 100) and the run continues to
+  the time limit. Fixing this needs membership to drop the dead node
+  (SWIM, next on the roadmap).

@@ -550,6 +550,9 @@ class Scheduler:
                 tracked = None
             # `held` stays: the job may be running, and its finish still counts.
         elif kind == "forward":
+            # TODO: route around dead nodes. The next lap picks the same ring
+            # successor, so a node that stays down blocks every job that must
+            # pass it. Membership (SWIM) should drop it and close the ring.
             assert isinstance(abandoned.msg, ForwardJob)
             tracked = self._jobs.get(abandoned.msg.job.job_id)
             if tracked is not None and tracked.handoff_id != ident:

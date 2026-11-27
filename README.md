@@ -31,6 +31,17 @@ full mesh. In all of them:
   ring, and waiting jobs retry on an interval.
 - Placement is first fit, either strict FIFO or with backfill.
 
+Every design tolerates lost messages and crashed nodes:
+
+- Requests between nodes (reserve, start, job handoffs, completions) are
+  resent until acknowledged, and given up on after a few tries.
+- Workers send heartbeats for running jobs. A scheduler that stops hearing
+  them, or sees the worker come back with a higher incarnation, reruns the
+  job elsewhere.
+- Jobs run at least once: a wrong guess that something was lost can run a
+  job twice, and the first run to finish counts. Jobs held by a crashed
+  scheduler are lost (reported, not yet retried).
+
 ## Layout
 
 | Path | Contents |
@@ -98,11 +109,18 @@ print(f"{done} jobs done by t={result.end_time:.1f} s, {sum(result.messages.valu
 execution (worker, GPUs, start and end), and message counts and encoded
 bytes by message type. Runs are deterministic for a given seed.
 
+`Simulator` can also inject faults: `losses=[MessageLoss(...)]` drops
+messages (by time window, type, sender or receiver, optionally at random),
+and `sim.crash(node_id, at=..., restart_at=...)` takes a whole node down
+and optionally restarts it with empty state.
+
 To compare a design with the legacy simulator's results on the same 100
-workloads, see [experiments/README.md](experiments/README.md):
+workloads, or to measure what faults cost it, see
+[experiments/README.md](experiments/README.md):
 
 ```sh
 python -m experiments.compare_with_legacy --design periodic --seeds 100
+python -m experiments.faults --design gossip --crashes 2 --downtime 5
 ```
 
 ## Deploy
