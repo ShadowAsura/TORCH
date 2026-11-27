@@ -129,6 +129,99 @@ def write_bar_chart(
     _write(path, width, height, body)
 
 
+def write_stacked_percentage_chart(
+    path: Path,
+    entries: list[tuple[str, list[tuple[str, float]]]],
+    *,
+    title: str,
+) -> None:
+    """
+    A 100% stacked horizontal bar chart with a shared segment order.
+    """
+    if not entries:
+        raise ValueError("stacked chart needs entries")
+    width = 820
+    left = 210
+    right = 190
+    top = 54
+    row_height = 32
+    bottom = 40
+    height = top + row_height * len(entries) + bottom
+    plot_width = width - left - right
+    segment_names = []
+    for _, segments in entries:
+        for name, _ in segments:
+            if name not in segment_names:
+                segment_names.append(name)
+    colors = {
+        name: PALETTE[index % len(PALETTE)] for index, name in enumerate(segment_names)
+    }
+    body = [
+        (
+            f'<text x="{width / 2}" y="26" text-anchor="middle" '
+            'font-family="sans-serif" font-size="18" font-weight="600">'
+            f"{escape(title)}</text>"
+        )
+    ]
+    for tick in range(5):
+        percent = tick * 25
+        x = left + plot_width * percent / 100
+        body.extend(
+            [
+                (
+                    f'<line x1="{x:.1f}" y1="{top - 8}" x2="{x:.1f}" '
+                    f'y2="{height - bottom}" stroke="#e5e7eb"/>'
+                ),
+                (
+                    f'<text x="{x:.1f}" y="{height - 15}" text-anchor="middle" '
+                    'font-family="sans-serif" font-size="11" fill="#6b7280">'
+                    f"{percent}%</text>"
+                ),
+            ]
+        )
+    for row, (label, segments) in enumerate(entries):
+        y = top + row * row_height
+        center = y + row_height / 2
+        x = left
+        body.append(
+            f'<text x="{left - 10}" y="{center + 4:.1f}" text-anchor="end" '
+            'font-family="sans-serif" font-size="12" fill="#111827">'
+            f"{escape(label)}</text>"
+        )
+        for name, percent in segments:
+            segment_width = plot_width * percent / 100
+            if segment_width <= 0:
+                continue
+            color = colors[name]
+            body.append(
+                f'<rect x="{x:.1f}" y="{y + 6}" width="{segment_width:.1f}" '
+                f'height="{row_height - 12}" fill="{color}"/>'
+            )
+            if percent >= 7:
+                body.append(
+                    f'<text x="{x + segment_width / 2:.1f}" y="{center + 4:.1f}" '
+                    'text-anchor="middle" font-family="sans-serif" font-size="10" '
+                    f'fill="white">{percent:.0f}%</text>'
+                )
+            x += segment_width
+    for index, name in enumerate(segment_names):
+        legend_y = top + index * 20
+        body.extend(
+            [
+                (
+                    f'<rect x="{left + plot_width + 16}" y="{legend_y - 9}" width="11" '
+                    f'height="11" fill="{colors[name]}"/>'
+                ),
+                (
+                    f'<text x="{left + plot_width + 33}" y="{legend_y + 1}" '
+                    'font-family="sans-serif" font-size="11" fill="#111827">'
+                    f"{escape(name)}</text>"
+                ),
+            ]
+        )
+    _write(path, width, height, body)
+
+
 def write_line_chart(
     path: Path,
     series: list[tuple[str, list[tuple[float, float]]]],

@@ -28,7 +28,11 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
-from experiments.charts import write_bar_chart, write_line_chart
+from experiments.charts import (
+    write_bar_chart,
+    write_line_chart,
+    write_stacked_percentage_chart,
+)
 from experiments.runner import (
     DESIGNS,
     PLACEMENTS,
@@ -250,6 +254,32 @@ def write_baseline_charts(chart_dir: Path, summaries: list[dict]) -> list[str]:
         ]
         write_bar_chart(
             chart_dir / filename, entries, title=f"{title} by design", unit=unit
+        )
+        written.append(filename)
+
+    byte_totals: dict[str, float] = defaultdict(float)
+    for summary in baseline:
+        for kind, size in summary["mean_message_bytes"].items():
+            byte_totals[kind] += size
+    kinds = sorted(byte_totals, key=byte_totals.get, reverse=True)
+    shown = kinds[:6]
+    entries = []
+    for summary in baseline:
+        sizes = summary["mean_message_bytes"]
+        total = sum(sizes.values())
+        if total <= 0:
+            continue
+        segments = [(kind, 100.0 * sizes.get(kind, 0.0) / total) for kind in shown]
+        other = total - sum(sizes.get(kind, 0.0) for kind in shown)
+        if other > 0:
+            segments.append(("other", 100.0 * other / total))
+        entries.append((display_label(summary), segments))
+    if entries:
+        filename = "baseline_traffic_composition.svg"
+        write_stacked_percentage_chart(
+            chart_dir / filename,
+            entries,
+            title="Network traffic composition by design",
         )
         written.append(filename)
     return written

@@ -9,7 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from experiments.charts import write_bar_chart, write_line_chart
+from experiments.charts import (
+    write_bar_chart,
+    write_line_chart,
+    write_stacked_percentage_chart,
+)
 from experiments.compare_with_legacy import run_new
 from experiments.runner import (
     DESIGNS,
@@ -141,6 +145,13 @@ def test_charts_are_valid_svg(tmp_path):
         y_label="y",
     )
     ET.parse(line)
+    stacked = tmp_path / "stacked.svg"
+    write_stacked_percentage_chart(
+        stacked,
+        [("a", [("x", 75.0), ("y", 25.0)]), ("b", [("x", 50.0), ("y", 50.0)])],
+        title="stacked",
+    )
+    ET.parse(stacked)
 
 
 def test_write_outputs_creates_machine_readable_results_and_report(tmp_path):
@@ -162,5 +173,6 @@ def test_write_outputs_creates_machine_readable_results_and_report(tmp_path):
     assert (tmp_path / "rows.csv").read_text().startswith("case_index,")
     assert "Baseline comparison" in (tmp_path / "index.html").read_text()
     assert (tmp_path / "charts" / "baseline_delay.svg").exists()
+    assert (tmp_path / "charts" / "baseline_traffic_composition.svg").exists()
     assert (tmp_path / "charts" / "sweep_interval_backfill_delay.svg").exists()
     ET.parse(tmp_path / "charts" / "sweep_interval_backfill_delay.svg")

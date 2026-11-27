@@ -38,7 +38,7 @@ The output directory contains:
 | `rows.csv` | one row per case and seed |
 | `summary.csv` | means and 95% confidence intervals over seeds |
 | `index.html` | report tables with the generated charts |
-| `charts/` | dependency-free SVG bar charts for the baseline and line charts for sweeps |
+| `charts/` | dependency-free SVG bar charts for the baseline, traffic composition, and line charts for sweeps |
 
 Metrics are mean scheduling delay (submission to first start), mean job
 completion time (submission to first completion), makespan (first
