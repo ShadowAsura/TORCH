@@ -71,6 +71,12 @@ def test_setup_rejects_non_finite_numeric_settings():
         Setup(arrival_rate=float("inf")).validate()
 
 
+def test_setup_rejects_clusters_that_cannot_run_every_workload_profile():
+    with pytest.raises(ValueError, match="cannot run every workload profile"):
+        Setup(a100_nodes=0).validate()
+    Setup(l40_nodes=0).validate()
+
+
 def test_simulation_metrics_are_deterministic_and_internally_consistent():
     case = expand_cases(tiny_setup(), designs=["sampling"], placements=["backfill"])[0]
     first = simulate(case, 3)

@@ -18,7 +18,7 @@ from torchsched.placement.first_fit import FirstFit
 from torchsched.runtime.sim import Simulator
 from torchsched.types.metrics import JobCompleted, JobStarted, ReservationRejected
 from torchsched.types.models import GpuGroup, NodeSpec
-from torchsched.workloads import poisson_workload
+from torchsched.workloads import PROFILES, poisson_workload
 
 DESIGNS = ("centralized", "global-gossip", "gossip", "periodic", "sampling")
 PLACEMENTS = ("strict", "backfill")
@@ -67,6 +67,19 @@ class Setup:
             raise ValueError("node counts must be nonnegative")
         if self.l40_nodes + self.a100_nodes < 1:
             raise ValueError("the cluster needs at least one worker")
+        groups = [
+            group
+            for spec in cluster(self.l40_nodes, self.a100_nodes)
+            for group in spec.gpus
+        ]
+        for gpu_count, min_vram, _, _ in PROFILES:
+            if not any(
+                group.gpu_type in {"L40", "A100"}
+                and gpu_count <= group.count
+                and min_vram <= group.vram_gb
+                for group in groups
+            ):
+                raise ValueError("the cluster cannot run every workload profile")
         numeric = (
             "arrival_rate",
             "latency",
