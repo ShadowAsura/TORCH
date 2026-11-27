@@ -58,8 +58,10 @@ added the encoder without changing scheduling behavior.
 | | backfill | 4.757 | [4.551, 4.963] | 981 | 13,085 | — |
 | `77502f2` rejections carry worker status | strict FIFO | 4.886 | [4.631, 5.141] | 60 | 12,921 | 3,470 |
 | | backfill | 4.638 | [4.411, 4.865] | 55 | 12,387 | 3,357 |
-| _(next commit)_ acks for lost messages | strict FIFO | 4.886 | [4.631, 5.141] | 60 | 24,533 | 4,860 |
+| `9f90a1d` acks for lost messages | strict FIFO | 4.886 | [4.631, 5.141] | 60 | 24,533 | 4,860 |
 | | backfill | 4.638 | [4.411, 4.865] | 55 | 23,490 | 4,685 |
+| _(next commit)_ crash detection, idle records stay fresh | strict FIFO | 4.954 | [4.699, 5.208] | 80 | 24,901 | 5,826 |
+| | backfill | 4.639 | [4.414, 4.864] | 75 | 23,524 | 5,596 |
 
 Paired differences against legacy (same workload per seed):
 
@@ -69,6 +71,8 @@ Paired differences against legacy (same workload per seed):
 | | backfill | +0.004 s (+0.1%) | [−0.084, +0.092] | 50/100 seeds |
 | `77502f2` | strict FIFO | +0.133 s (+2.8%) | [+0.016, +0.250] | 56/100 seeds |
 | | backfill | −0.115 s (−2.4%) | [−0.197, −0.033] | 33/100 seeds |
+| _(next commit)_ | strict FIFO | +0.201 s (+4.2%) | [+0.089, +0.313] | 62/100 seeds |
+| | backfill | −0.114 s (−2.4%) | [−0.199, −0.029] | 37/100 seeds |
 
 What changed between versions:
 
@@ -102,8 +106,10 @@ status record carries its node's full `NodeSpec`.
 | Legacy (`distributed.py`, sampling) | per job, no queue | 4.850 | [4.627, 5.073] | 54 | 18,423 | — |
 | `91dfae6` sampling ported | strict FIFO | 5.014 | [4.783, 5.245] | 6 | 9,664 | 1,827 |
 | | backfill | 4.881 | [4.650, 5.111] | 7 | 9,544 | 1,800 |
-| _(next commit)_ acks for lost messages | strict FIFO | 5.014 | [4.783, 5.245] | 6 | 15,569 | 2,526 |
+| `9f90a1d` acks for lost messages | strict FIFO | 5.014 | [4.783, 5.245] | 6 | 15,569 | 2,526 |
 | | backfill | 4.881 | [4.650, 5.111] | 7 | 15,312 | 2,483 |
+| _(next commit)_ crash detection, idle records stay fresh | strict FIFO | 5.014 | [4.783, 5.245] | 6 | 15,750 | 2,538 |
+| | backfill | 4.881 | [4.650, 5.111] | 7 | 15,519 | 2,496 |
 
 | Version | Placement | Delay vs legacy | 95% CI | Slower on |
 | --- | --- | --- | --- | --- |
@@ -125,13 +131,17 @@ change any global-gossip number.
 | Legacy (`distributed.py`, gossip) | per job, no queue | 4.646 | [4.427, 4.865] | 208 | 12,935 | — |
 | `0abb0e6` first recorded | strict FIFO | 4.820 | [4.571, 5.070] | 24 | 12,788 | 2,966 |
 | | backfill | 4.583 | [4.354, 4.813] | 20 | 12,274 | 2,857 |
-| _(next commit)_ acks for lost messages | strict FIFO | 4.820 | [4.571, 5.070] | 24 | 24,344 | 4,349 |
+| `9f90a1d` acks for lost messages | strict FIFO | 4.820 | [4.571, 5.070] | 24 | 24,344 | 4,349 |
 | | backfill | 4.583 | [4.354, 4.813] | 20 | 23,335 | 4,181 |
+| _(next commit)_ crash detection, idle records stay fresh | strict FIFO | 4.869 | [4.614, 5.124] | 31 | 24,677 | 4,580 |
+| | backfill | 4.584 | [4.358, 4.809] | 26 | 23,447 | 4,377 |
 
 | Version | Placement | Delay vs legacy | 95% CI | Slower on |
 | --- | --- | --- | --- | --- |
 | `0abb0e6` | strict FIFO | +0.174 s (+3.7%) | [+0.078, +0.269] | 64/100 seeds |
 | | backfill | −0.063 s (−1.4%) | [−0.152, +0.027] | 42/100 seeds |
+| _(next commit)_ | strict FIFO | +0.223 s (+4.8%) | [+0.110, +0.335] | 62/100 seeds |
+| | backfill | −0.063 s (−1.3%) | [−0.146, +0.021] | 44/100 seeds |
 
 Ring gossip has been in the new code since `807785d`, but was first
 compared with legacy here. The pattern matches global gossip: backfill is
@@ -144,13 +154,17 @@ as fast as legacy, and strict FIFO costs a few percent.
 | Legacy (`distributed.py`, periodic) | per job, no queue | 4.649 | [4.425, 4.873] | 154 | 14,879 | — |
 | `0abb0e6` periodic ported | strict FIFO | 4.918 | [4.652, 5.183] | 41 | 15,062 | 3,174 |
 | | backfill | 4.594 | [4.362, 4.827] | 30 | 14,329 | 3,021 |
-| _(next commit)_ acks for lost messages | strict FIFO | 4.918 | [4.652, 5.183] | 41 | 26,814 | 4,580 |
+| `9f90a1d` acks for lost messages | strict FIFO | 4.918 | [4.652, 5.183] | 41 | 26,814 | 4,580 |
 | | backfill | 4.594 | [4.362, 4.827] | 30 | 25,405 | 4,346 |
+| _(next commit)_ crash detection, idle records stay fresh | strict FIFO | 4.888 | [4.623, 5.152] | 44 | 26,844 | 4,566 |
+| | backfill | 4.552 | [4.325, 4.780] | 35 | 25,368 | 4,324 |
 
 | Version | Placement | Delay vs legacy | 95% CI | Slower on |
 | --- | --- | --- | --- | --- |
 | `0abb0e6` | strict FIFO | +0.269 s (+5.8%) | [+0.155, +0.382] | 63/100 seeds |
 | | backfill | −0.055 s (−1.2%) | [−0.135, +0.026] | 38/100 seeds |
+| _(next commit)_ | strict FIFO | +0.239 s (+5.1%) | [+0.128, +0.350] | 65/100 seeds |
+| | backfill | −0.097 s (−2.1%) | [−0.174, −0.019] | 43/100 seeds |
 
 With backfill, delay matches legacy. Strict FIFO costs more here (about
 6%) than in the other designs. Porting periodic did not change any
@@ -158,7 +172,7 @@ global-gossip or sampling number.
 
 #### Acknowledgements for lost messages (all designs)
 
-The _(next commit)_ rows above add resending for lost messages. Every
+The `9f90a1d` rows above add resending for lost messages. Every
 `ForwardJob` is acknowledged with a `ForwardAck` and every `JobFinished`
 with a `FinishedAck`, and `ForwardJob` gained a handoff id. Without
 faults, nothing else changes: delay, its confidence interval, and
@@ -166,6 +180,25 @@ rejections are identical in every design, so the paired differences are
 the same as in the previous rows. Messages rise by 60–90% and bytes by
 35–40%, mostly from acknowledging `ForwardJob`, which was already most of
 the traffic. Reducing forwarding laps (see above) would shrink both.
+
+#### Crash detection and fresh idle records (all designs)
+
+The _(next commit)_ rows add two things:
+
+- **Heartbeats.** Workers send a `Heartbeat` to each scheduler with jobs
+  running on them, about once a second. This adds roughly 200 messages
+  per seed and changes no scheduling decision: sampling's delays and
+  rejections are identical to the previous rows.
+- **A gossip fix.** Gossip and periodic kept a received record only if
+  its version was newer, so an idle node's later pushes (same version,
+  later `observed_at`) were dropped, and the node fell out of every view
+  `max_staleness` seconds after its last change. Records with the same
+  version but a later `observed_at` now replace older ones, as in legacy.
+  Views keep idle nodes, so status pushes carry more records (global
+  gossip bytes +20%). Backfill delay is unchanged or better (periodic is
+  now significantly faster than legacy). Strict FIFO is about 1% slower
+  for both gossip designs, with more rejections; each change is well
+  within its confidence interval, and the cause is not yet pinned down.
 
 ### Caveats
 

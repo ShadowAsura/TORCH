@@ -22,7 +22,7 @@ from torchsched.types.messages import (
     LookupReply,
     LookupRequest,
 )
-from torchsched.types.metrics import JobCompleted, RequestAbandoned
+from torchsched.types.metrics import JobCompleted, JobInterrupted, RequestAbandoned
 from torchsched.types.models import GpuGroup, Job, NodeSpec, Status
 from torchsched.workloads import poisson_workload
 
@@ -172,7 +172,7 @@ def forward_big_job(node):
 
 def test_forwarded_job_is_kept_until_acknowledged():
     node = forwarding_scheduler()
-    big, forward = forward_big_job(node)
+    _, forward = forward_big_job(node)
     assert forward.to == "b"
     # Unacknowledged: the same handoff is sent again.
     resend = ("scheduler", "resend", "forward", forward.msg.handoff_id)
@@ -256,10 +256,13 @@ def test_every_job_completes_despite_random_loss(seed, probability):
     assert sum(result.dropped.values()) > 100
     completions = Counter(m.job_id for m in metrics(result, JobCompleted))
     assert set(completions) == {s.job.job_id for s in workload}
-    # Only giving up on a request that in fact arrived can duplicate a job.
+    # Only a wrong guess that a message or a run was lost (giving up on a
+    # request, or missing heartbeats) can duplicate a job.
     duplicated = {job_id for job_id, count in completions.items() if count > 1}
-    abandoned = {m.job_id for m in metrics(result, RequestAbandoned)}
-    assert duplicated <= abandoned
+    guessed = {m.job_id for m in metrics(result, RequestAbandoned)} | {
+        m.job_id for m in metrics(result, JobInterrupted)
+    }
+    assert duplicated <= guessed
 
     # Duplicate runs are allowed, but never more GPUs than a worker has.
     usage = defaultdict(list)

@@ -328,7 +328,13 @@ def load_runtime(config: Mapping[str, Any], node_id: NodeId, **options) -> HttpR
     missing = set(nodes) - set(addresses)
     if missing:
         raise ValueError(f"no address for {sorted(missing)}")
-    return HttpRuntime(nodes[node_id], addresses, **options)
+    node = nodes[node_id]
+    if node.rebuild is not None:
+        # A restarted process must outrank its earlier self, without
+        # storing anything: boot time in milliseconds always grows (with
+        # the loosely synchronized clocks staleness already assumes).
+        node = node.rebuild(int(time.time() * 1000))
+    return HttpRuntime(node, addresses, **options)
 
 
 def main() -> None:

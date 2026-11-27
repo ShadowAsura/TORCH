@@ -100,6 +100,18 @@ class JobFinished(Message):
 
 
 @dataclass(frozen=True, slots=True)
+class Heartbeat(Message):
+    """
+    Worker -> a scheduler with jobs running here: these are still running.
+
+    Sent periodically while any of the scheduler's jobs run. A scheduler
+    that stops hearing about a job assumes the worker is gone.
+    """
+
+    reservation_ids: tuple[ReservationId, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FinishedAck(Message):
     """
     Scheduler -> worker: `JobFinished` arrived, so stop resending it.

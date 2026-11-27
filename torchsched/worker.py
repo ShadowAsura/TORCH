@@ -13,6 +13,7 @@ from torchsched.types.actions import Action, CancelTimer, Execute, Send, SetTime
 from torchsched.types.events import Event, ExecutionFinished, Received, TimerFired
 from torchsched.types.messages import (
     FinishedAck,
+    Heartbeat,
     JobFinished,
     ReserveReply,
     ReserveRequest,
@@ -43,6 +44,10 @@ class Worker:
     `JobFinished` is resent every `request_timeout` seconds until the
     scheduler acknowledges it, at most `max_sends` times in all.
 
+    While jobs run, every `heartbeat_interval` seconds each scheduler with
+    jobs here gets a `Heartbeat` listing them, so it can tell a long job
+    from a dead worker.
+
     Every change to free GPUs increments `version` and sends `StatusChanged`
     to this node's dissemination component.
     """
@@ -59,13 +64,18 @@ class Worker:
         lease_seconds: float = 30.0,
         request_timeout: float = 1.0,
         max_sends: int = 5,
+        heartbeat_interval: float = 1.0,
     ):
         if not ctx.spec.gpus:
             raise ValueError("a worker needs at least one GPU group")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
+        if heartbeat_interval <= 0:
+            raise ValueError("heartbeat_interval must be positive")
         self.ctx = ctx
         self.lease_seconds = lease_seconds
+        self.heartbeat_interval = heartbeat_interval
+        self._heartbeat_armed = False
         self.version = 0
         self._free = [group.count for group in ctx.spec.gpus]
         self._reservations: dict[ReservationId, _Reservation] = {}
@@ -92,6 +102,8 @@ class Worker:
                 return self._expire(reservation_id, now)
             case Received(_, FinishedAck(reservation_id)):
                 return self._outbox.acknowledged(("finished", reservation_id))
+            case TimerFired(("heartbeat",)):
+                return self._heartbeat()
             case TimerFired(("resend", *key)):
                 # A scheduler that never acknowledges is gone; stop resending.
                 actions, _ = self._outbox.timed_out(tuple(key))
@@ -160,11 +172,29 @@ class Worker:
             return [Send(sender, StartReply(reservation_id, True))]
         held.running = True
         gpu_type = self.ctx.spec.gpus[held.group].gpu_type
-        return [
+        actions: list[Action] = [
             CancelTimer(("lease", reservation_id)),
             Execute(reservation_id, held.job, held.group, gpu_type),
             Send(sender, StartReply(reservation_id, True)),
         ]
+        if not self._heartbeat_armed:
+            self._heartbeat_armed = True
+            actions.append(SetTimer(("heartbeat",), self.heartbeat_interval))
+        return actions
+
+    def _heartbeat(self) -> list[Action]:
+        running: dict[NodeId, list[ReservationId]] = {}
+        for reservation_id, held in self._reservations.items():
+            if held.running:
+                running.setdefault(held.holder, []).append(reservation_id)
+        if not running:
+            self._heartbeat_armed = False
+            return []
+        actions: list[Action] = [
+            Send(holder, Heartbeat(tuple(ids))) for holder, ids in running.items()
+        ]
+        actions.append(SetTimer(("heartbeat",), self.heartbeat_interval))
+        return actions
 
     def _finished(self, event: ExecutionFinished, now: float) -> list[Action]:
         held = self._reservations.get(event.reservation_id)

@@ -70,6 +70,18 @@ class JobCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class JobInterrupted:
+    """
+    The scheduler believes the job's run was lost (its worker stopped
+    sending heartbeats or restarted), so the job is queued again.
+    """
+
+    job_id: JobId
+    worker: NodeId
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class JobFailed:
     """
     Terminal failure: the job will not be retried.
@@ -87,5 +99,6 @@ Metric = (
     | RequestAbandoned
     | JobStarted
     | JobCompleted
+    | JobInterrupted
     | JobFailed
 )

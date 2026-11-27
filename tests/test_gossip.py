@@ -205,6 +205,20 @@ def test_lookup_returns_own_status_then_fresh_neighbors():
     assert [s.node_id for s in later.msg.candidates] == ["a", "c"]  # b went stale
 
 
+def test_idle_node_stays_in_the_view():
+    """
+    A node whose version never changes still refreshes its record, so it
+    does not go stale while it keeps gossiping.
+    """
+    node, _ = gossip_node()
+    node.handle(Boot(), 0.0)
+    node.handle(Received("b", StatusPush((record("b", 1, at=0.0),))), 0.0)
+    node.handle(Received("b", StatusPush((record("b", 1, at=3.0),))), 3.0)
+    [reply] = node.handle(Received("a", LookupRequest("l1")), 5.0)
+    assert [s.node_id for s in reply.msg.candidates] == ["a", "b"]
+    assert reply.msg.candidates[1].observed_at == 3.0
+
+
 def test_node_without_neighbors_only_rearms():
     node, _ = gossip_node(neighbors=())
     assert node.handle(Boot(), 0.0) == [SetTimer(("dissemination", "gossip"), 0.5)]

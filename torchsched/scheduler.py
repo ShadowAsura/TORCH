@@ -19,6 +19,7 @@ from torchsched.types.messages import (
     FinishedAck,
     ForwardAck,
     ForwardJob,
+    Heartbeat,
     JobFinished,
     LookupReply,
     LookupRequest,
@@ -33,6 +34,7 @@ from torchsched.types.metrics import (
     JobCompleted,
     JobFailed,
     JobForwarded,
+    JobInterrupted,
     JobStarted,
     PlacementRetried,
     RequestAbandoned,
@@ -69,6 +71,7 @@ class _Job:
     reservation_id: ReservationId | None = None
     request_id: str | None = None  # the ReserveRequest in flight, if RESERVING
     handoff_id: str | None = None  # the ForwardJob in flight, if FORWARDING
+    last_heard: float = 0.0  # when the worker last confirmed it, if RUNNING
     # Schedulers that tried this job on its current lap, ending with this one.
     visited: tuple[NodeId, ...] = ()
 
@@ -87,6 +90,7 @@ class _Held:
     worker: NodeId
     group: GroupIndex
     gpu_count: int
+    incarnation: int  # the worker's incarnation when it granted the reservation
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,12 @@ class Scheduler:
     (`RequestAbandoned`) and queues the job again. Giving up can be wrong
     when only the replies were lost, so a job may run more than once. The
     first run to finish counts, and later ones are ignored.
+
+    Workers can crash. A running job whose worker sends no `Heartbeat` for
+    `heartbeat_timeout` seconds, or whose worker shows up in a lookup with
+    a higher incarnation (it restarted), is presumed lost
+    (`JobInterrupted`) and queued again. Like giving up on a request, this
+    can be wrong for a slow worker, so a job may run more than once.
     """
 
     name: ClassVar[str] = "scheduler"
@@ -148,6 +158,7 @@ class Scheduler:
             StartReply,
             JobFinished,
             ForwardAck,
+            Heartbeat,
         }
     )
 
@@ -160,13 +171,18 @@ class Scheduler:
         retry_interval: float | None = None,
         request_timeout: float = 1.0,
         max_sends: int = 5,
+        heartbeat_timeout: float = 3.0,
     ):
         if retry_interval is not None and retry_interval <= 0:
             raise ValueError("retry_interval must be positive")
+        if heartbeat_timeout <= 0:
+            raise ValueError("heartbeat_timeout must be positive")
         self.ctx = ctx
         self.placement = placement
         self.forwarding = forwarding
         self.retry_interval = retry_interval
+        self.heartbeat_timeout = heartbeat_timeout
+        self._liveness_armed = False
         self._jobs: dict[JobId, _Job] = {}
         # Jobs completed or failed here, and handoffs received, so that
         # resent messages are not mistaken for new work.
@@ -198,7 +214,11 @@ class Scheduler:
             case Received(sender, ReserveReply() as reply):
                 return self._reserved(sender, reply)
             case Received(_, StartReply() as reply):
-                return self._started(reply)
+                return self._started(reply, now)
+            case Received(_, Heartbeat(reservation_ids)):
+                return self._heard(reservation_ids, now)
+            case TimerFired(("liveness",)):
+                return self._check_liveness(now)
             case Received(sender, JobFinished() as notice):
                 return self._finished(sender, notice)
             case TimerFired(("retry",)):
@@ -312,12 +332,13 @@ class Scheduler:
         if reply.lookup_id != self._lookup_id:
             return []
         self._lookup_id = None
+        # Before planning, so jobs lost to a restart can be placed this round.
+        actions = self._check_restarts(reply.candidates)
         candidates = self._apply_assumed(reply.candidates)
         specs = {status.node_id: status.spec for status in candidates}
         pending = self._pending()
         plan = self.placement.plan([j.job for j in pending], candidates, now)
 
-        actions: list[Action] = []
         for assignment in plan:
             tracked = self._jobs[assignment.job_id]
             request_id = self._new_id("reserve")
@@ -418,7 +439,7 @@ class Scheduler:
             tracked.phase = _Phase.STARTING
             tracked.reservation_id = reply.reservation_id
             self._by_reservation[reply.reservation_id] = _Held(
-                job_id, sender, group, tracked.job.gpu_count
+                job_id, sender, group, tracked.job.gpu_count, reply.order_key[0]
             )
             # Assume the reservation only now, keyed to the grant's version
             # (see `_Assumed`). Until the reply arrived, the open round kept
@@ -440,7 +461,7 @@ class Scheduler:
                 actions.append(Send(self.ctx.node_id, StatusPush((reply.status,))))
         return actions + self._round_step_done()
 
-    def _started(self, reply: StartReply) -> list[Action]:
+    def _started(self, reply: StartReply, now: float) -> list[Action]:
         actions = self._outbox.acknowledged(("start", reply.reservation_id))
         held = self._by_reservation.get(reply.reservation_id)
         tracked = self._jobs.get(held.job_id) if held is not None else None
@@ -457,6 +478,7 @@ class Scheduler:
             tracked.reservation_id = None
             return actions + self._request_round()
         tracked.phase = _Phase.RUNNING
+        tracked.last_heard = now
         assert tracked.worker and tracked.group is not None and tracked.gpu_type
         started = JobStarted(
             tracked.job.job_id,
@@ -465,13 +487,12 @@ class Scheduler:
             tracked.gpu_type,
             tracked.job.gpu_count,
         )
-        return [*actions, Observe(started)]
+        actions.append(Observe(started))
+        if not self._liveness_armed:
+            self._liveness_armed = True
+            actions.append(SetTimer(("liveness",), self.heartbeat_timeout))
+        return actions
 
-    # TODO: handle worker crashes. A job running on a worker that crashes is
-    # never reported finished, so it is lost silently. One way to detect
-    # it: a record whose `incarnation` is higher than the grant's means the
-    # worker restarted, so its jobs should be requeued (and recorded with a
-    # new `JobInterrupted` metric).
     def _finished(self, sender: NodeId, notice: JobFinished) -> list[Action]:
         # Acknowledge even duplicates: the worker's earlier ack may be lost.
         actions: list[Action] = [Send(sender, FinishedAck(notice.reservation_id))]
@@ -547,6 +568,63 @@ class Scheduler:
             Observe(RequestAbandoned(tracked.job.job_id, abandoned.to, request)),
             *self._request_round(),
         ]
+
+    # ==================================================
+    # Crashed workers
+    # ==================================================
+
+    def owned_jobs(self) -> list[JobId]:
+        return list(self._jobs)
+
+    def _running(self) -> list[tuple[_Job, _Held]]:
+        running = []
+        for tracked in self._jobs.values():
+            if tracked.phase is _Phase.RUNNING and tracked.reservation_id is not None:
+                running.append((tracked, self._by_reservation[tracked.reservation_id]))
+        return running
+
+    def _heard(self, reservation_ids: tuple[ReservationId, ...], now: float) -> list[Action]:
+        for reservation_id in reservation_ids:
+            held = self._by_reservation.get(reservation_id)
+            tracked = self._jobs.get(held.job_id) if held is not None else None
+            if tracked is not None and tracked.reservation_id == reservation_id:
+                tracked.last_heard = now
+        return []
+
+    def _check_liveness(self, now: float) -> list[Action]:
+        actions: list[Action] = []
+        next_check = None
+        for tracked, held in self._running():
+            deadline = tracked.last_heard + self.heartbeat_timeout
+            if deadline <= now:
+                actions += self._interrupt(tracked, held, "no heartbeat")
+            elif next_check is None or deadline < next_check:
+                next_check = deadline
+        self._liveness_armed = next_check is not None
+        if next_check is not None:
+            actions.append(SetTimer(("liveness",), next_check - now))
+        if any(isinstance(a, Observe) for a in actions):
+            actions += self._request_round()
+        return actions
+
+    def _check_restarts(self, candidates: tuple[Status, ...]) -> list[Action]:
+        """
+        Interrupt running jobs whose worker restarted since granting them.
+        """
+        incarnations = {status.node_id: status.incarnation for status in candidates}
+        actions: list[Action] = []
+        for tracked, held in self._running():
+            if incarnations.get(held.worker, 0) > held.incarnation:
+                actions += self._interrupt(tracked, held, "worker restarted")
+        return actions
+
+    def _interrupt(self, tracked: _Job, held: _Held, reason: str) -> list[Action]:
+        # `held` stays: if the worker is only slow, its finish still counts.
+        tracked.phase = _Phase.PENDING
+        tracked.reservation_id = None
+        tracked.visited = (self.ctx.node_id,)
+        self._dirty = True
+        return [Observe(JobInterrupted(tracked.job.job_id, held.worker, reason))]
 
     def _new_id(self, kind: str) -> str:
         self._next_id += 1

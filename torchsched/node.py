@@ -87,6 +87,10 @@ class Node:
       key, with that prefix removed.
     * Timer keys in SetTimer and CancelTimer are prefixed with the emitting
       component's name.
+
+    `rebuild`, if set, makes a fresh copy of this node with a given
+    incarnation. Runtimes use it to restart a node after a crash: the new
+    node starts with empty state, as a restarted machine would.
     """
 
     def __init__(
@@ -103,6 +107,7 @@ class Node:
         self.membership = membership
         self.dissemination = dissemination
         self.scheduler = scheduler
+        self.rebuild: Callable[[int], Node] | None = None
         self.components: tuple[Component, ...] = tuple(
             c for c in (worker, membership, dissemination, scheduler) if c is not None
         )
