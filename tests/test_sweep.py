@@ -77,6 +77,13 @@ def test_setup_rejects_clusters_that_cannot_run_every_workload_profile():
     Setup(l40_nodes=0).validate()
 
 
+def test_zero_staleness_is_a_valid_isolated_gossip_baseline():
+    setup = Setup(jobs=8, l40_nodes=1, a100_nodes=1, max_staleness=0.0)
+    case = expand_cases(setup, designs=["global-gossip"], placements=["backfill"])[0]
+    row = simulate(case, 2)
+    assert row["completed"] == setup.jobs
+
+
 def test_simulation_metrics_are_deterministic_and_internally_consistent():
     case = expand_cases(tiny_setup(), designs=["sampling"], placements=["backfill"])[0]
     first = simulate(case, 3)

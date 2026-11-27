@@ -92,9 +92,11 @@ class Setup:
             raise ValueError("experiment settings must be finite")
         if self.latency < 0:
             raise ValueError("latency must be nonnegative")
-        for name in ("interval", "max_staleness", "retry_interval", "time_limit"):
+        for name in ("interval", "retry_interval", "time_limit"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+        if self.max_staleness < 0:
+            raise ValueError("max_staleness must be nonnegative")
         if self.radius < 1:
             raise ValueError("radius must be positive")
         if self.sample_size < 1:
