@@ -40,7 +40,11 @@ class MembershipRole(Component, Protocol):
     Tracks which nodes exist and this node's neighborhood.
 
     TODO: handle SWIM (failure detection, join via introducers). For now
-    membership is a static list.
+    membership is a static list. With SWIM, neighborhoods must be computed
+    from the live member set, starting from the layouts in
+    `torchsched.topology`. A shared shuffle like `ring_with_shortcuts`
+    needs every node to agree on the member list, so churn needs a
+    per-node rule.
     """
 
     def neighbors(self) -> frozenset[NodeId]: ...

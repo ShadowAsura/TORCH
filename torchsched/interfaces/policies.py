@@ -52,15 +52,3 @@ class ForwardingPolicy(Protocol):
         visited: Sequence[NodeId],
         neighbors: frozenset[NodeId],
     ) -> NodeId | None: ...
-
-
-class Topology(Protocol):
-    """
-    Map the current member set to this node's neighborhood (small world).
-    """
-
-    name: str
-
-    def neighbors(
-        self, node_id: NodeId, members: frozenset[NodeId]
-    ) -> frozenset[NodeId]: ...

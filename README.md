@@ -44,7 +44,7 @@ full mesh. In all of them:
 | `torchsched/clusters.py` | Builds every node of a design, in code or from a JSON config |
 | `torchsched/runtime/` | `sim.py` (deterministic simulator) and `http.py` (FastAPI + httpx) |
 | `experiments/` | Paired comparisons with recorded legacy results, and performance history |
-| `deploy/` | Docker image, cluster configs, Compose files, and an end-to-end demo |
+| `deploy/` | Docker image, one cluster config and Compose file for every design, and an end-to-end demo |
 
 The core has no I/O. A node takes one event at a time (`Node.handle(event,
 now)`) and returns actions (send, set timer, execute, observe) for a

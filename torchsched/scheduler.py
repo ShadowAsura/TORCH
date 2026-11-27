@@ -386,7 +386,8 @@ class Scheduler:
     # TODO: handle worker crashes. A job running on a worker that crashes is
     # never reported finished, so it is lost silently. One way to detect
     # it: a record whose `incarnation` is higher than the grant's means the
-    # worker restarted, so its jobs should be requeued (`JobInterrupted`).
+    # worker restarted, so its jobs should be requeued (and recorded with a
+    # new `JobInterrupted` metric).
     def _finished(self, sender: NodeId, notice: JobFinished) -> list[Action]:
         job_id = self._by_reservation.pop(notice.reservation_id, None)
         if job_id is None:

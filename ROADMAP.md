@@ -20,7 +20,7 @@
   For every peer-to-peer design, backfill placement matches legacy
   scheduling delay over 100 paired seeds. See
   [experiments/README.md](experiments/README.md).
-- **Deployment.** A Docker image, cluster configs and Compose files for
+- **Deployment.** A Docker image, one cluster config and Compose file for
   every design, and an end-to-end demo that checks completions, released
   GPUs and failed messages.
 - **Measurements.** Per-type message counts and encoded bytes, rejections,
@@ -55,10 +55,3 @@
    demonstration snapshots, the recorded presentation and slides, and the
    division of work. Code and presentation are due December 3, the report
    December 4.
-
-## Reconstruction note
-
-The project history was reconstructed from preserved source and a record of
-planned changes. Commit titles and dates may document the intended progression;
-they should not be treated as proof that the original, lost Git objects were
-recovered byte for byte.

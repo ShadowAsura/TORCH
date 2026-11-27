@@ -86,27 +86,23 @@ def test_compatibility_considers_each_group_separately():
     two = job(gpu_count=2, vram=16)
     assert not two.can_use(MIXED.gpus[0])
     assert two.can_use(MIXED.gpus[1])
-    assert two.compatible_with(MIXED)
     # 3 GPUs exceed every single group; jobs never span groups.
-    assert not job(gpu_count=3).compatible_with(MIXED)
+    assert not any(job(gpu_count=3).can_use(group) for group in MIXED.gpus)
     # Type mismatch and VRAM limits.
-    assert not job(runtimes={"A100": 1.0}).compatible_with(MIXED)
+    assert not any(job(runtimes={"A100": 1.0}).can_use(group) for group in MIXED.gpus)
     assert not job(vram=40).can_use(MIXED.gpus[0])
-    assert job(vram=40).compatible_with(MIXED)
-    assert not job().compatible_with(NodeSpec("coordinator"))
+    assert job(vram=40).can_use(MIXED.gpus[1])
 
 
 def test_status_reports_free_gpus_per_group():
     status = Status(MIXED, [1, 1], incarnation=1, version=4, observed_at=2.0)
     assert status.free_gpus == (1, 1)
-    assert status.total_free == 2
     assert status.node_id == "ws-1"
     assert status.order_key() == (1, 4)
     assert status.fitting_groups(job(gpu_count=1, vram=16)) == (0, 1)
     assert status.fitting_groups(job(gpu_count=1, vram=40)) == (1,)
     # Compatible with the A6000 group, but only one of its two GPUs is free.
     assert status.fitting_groups(job(gpu_count=2)) == ()
-    assert not status.fits(job(gpu_count=2))
 
     with pytest.raises(ValueError):
         Status(MIXED, [1], 1, 0, 0.0)

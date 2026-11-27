@@ -57,17 +57,6 @@ class JobCompleted:
 
 
 @dataclass(frozen=True, slots=True)
-class JobInterrupted:
-    """
-    Execution stopped early (worker crash, abort); the job may be retried.
-    """
-
-    job_id: JobId
-    worker: NodeId
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
 class JobFailed:
     """
     Terminal failure: the job will not be retried.
@@ -84,6 +73,5 @@ Metric = (
     | PlacementRetried
     | JobStarted
     | JobCompleted
-    | JobInterrupted
     | JobFailed
 )

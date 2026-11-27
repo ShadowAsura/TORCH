@@ -113,12 +113,6 @@ class Job:
             and self.min_vram_gb <= group.vram_gb
         )
 
-    def compatible_with(self, spec: NodeSpec) -> bool:
-        """
-        Whether any group on this node could ever run the job.
-        """
-        return any(self.can_use(group) for group in spec.gpus)
-
 
 @dataclass(frozen=True, slots=True)
 class Status:
@@ -154,10 +148,6 @@ class Status:
     def node_id(self) -> NodeId:
         return self.spec.node_id
 
-    @property
-    def total_free(self) -> int:
-        return sum(self.free_gpus)
-
     def order_key(self) -> tuple[int, int]:
         return (self.incarnation, self.version)
 
@@ -170,9 +160,6 @@ class Status:
             for index, (group, free) in enumerate(zip(self.spec.gpus, self.free_gpus))
             if job.can_use(group) and job.gpu_count <= free
         )
-
-    def fits(self, job: Job) -> bool:
-        return bool(self.fitting_groups(job))
 
 
 @dataclass(frozen=True, slots=True)
