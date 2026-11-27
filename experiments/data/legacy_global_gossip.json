@@ -1,6 +1,7 @@
 {
- "generated_from": "77502f2d1ba30347739d49cb96e794d9697ae91d",
+ "generated_from": "ad164e6f4a66a4b18ab682d0df119d32568b0f4f",
  "config": {
+  "design": "global-gossip",
   "jobs": 100,
   "arrival_rate": 5.0,
   "l40_nodes": 6,
@@ -8,7 +9,9 @@
   "latency": 0.02,
   "interval": 0.5,
   "max_staleness": 3.0,
-  "retry_interval": 0.25
+  "retry_interval": 0.25,
+  "radius": 1,
+  "sample_size": 2
  },
  "rows": [
   {

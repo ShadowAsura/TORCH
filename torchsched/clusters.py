@@ -4,14 +4,16 @@ Builders that assemble nodes into a cluster for one scheduling design.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from torchsched import topology
 from torchsched.codec import from_data
 from torchsched.dissemination.centralized import CentralizedDissemination
 from torchsched.dissemination.gossip import GossipDissemination
+from torchsched.dissemination.sampling import SamplingDissemination
 from torchsched.forwarding.ring import RingForwarding
+from torchsched.interfaces.component import DisseminationRole
 from torchsched.interfaces.policies import ForwardingPolicy, PlacementPolicy
 from torchsched.membership.static import StaticMembership
 from torchsched.node import Node, NodeContext
@@ -85,6 +87,64 @@ def gossip(
     at the node it was submitted to, so a job that nothing in that node's
     neighborhood can run waits forever.
     """
+    return _peer_to_peer(
+        workers,
+        neighborhoods=neighborhoods,
+        placement=placement,
+        forwarding=forwarding,
+        retry_interval=retry_interval,
+        seed=seed,
+        lease_seconds=lease_seconds,
+        dissemination=lambda ctx: GossipDissemination(
+            ctx, interval=interval, max_staleness=max_staleness
+        ),
+    )
+
+
+def sampling(
+    workers: Sequence[NodeSpec],
+    *,
+    neighborhoods: Mapping[NodeId, frozenset[NodeId]],
+    placement: PlacementPolicy,
+    forwarding: ForwardingPolicy | None,
+    sample_size: int,
+    retry_interval: float,
+    probe_timeout: float = 1.0,
+    seed: int = 0,
+    lease_seconds: float = 30.0,
+) -> list[Node]:
+    """
+    Like `gossip`, but schedulers probe `sample_size - 1` random neighbors
+    per placement round instead of keeping a view (Sparrow-style).
+    """
+    return _peer_to_peer(
+        workers,
+        neighborhoods=neighborhoods,
+        placement=placement,
+        forwarding=forwarding,
+        retry_interval=retry_interval,
+        seed=seed,
+        lease_seconds=lease_seconds,
+        dissemination=lambda ctx: SamplingDissemination(
+            ctx, sample_size=sample_size, probe_timeout=probe_timeout
+        ),
+    )
+
+
+def _peer_to_peer(
+    workers: Sequence[NodeSpec],
+    *,
+    neighborhoods: Mapping[NodeId, frozenset[NodeId]],
+    placement: PlacementPolicy,
+    forwarding: ForwardingPolicy | None,
+    retry_interval: float,
+    seed: int,
+    lease_seconds: float,
+    dissemination: Callable[[NodeContext], DisseminationRole],
+) -> list[Node]:
+    """
+    Every node runs a worker, a scheduler, and the given dissemination.
+    """
     missing = {spec.node_id for spec in workers} - set(neighborhoods)
     if missing:
         raise ValueError(f"no neighborhood for {sorted(missing)}")
@@ -96,9 +156,7 @@ def gossip(
                 ctx,
                 worker=Worker(ctx, lease_seconds=lease_seconds),
                 membership=StaticMembership(neighborhoods[spec.node_id]),
-                dissemination=GossipDissemination(
-                    ctx, interval=interval, max_staleness=max_staleness
-                ),
+                dissemination=dissemination(ctx),
                 scheduler=Scheduler(
                     ctx,
                     placement=placement,
@@ -116,7 +174,7 @@ def from_config(config: Mapping[str, Any]) -> list[Node]:
 
     ```
     {
-      "design": "centralized" | "gossip",
+      "design": "centralized" | "gossip" | "sampling",
       "seed": 0,                              # optional
       "lease_seconds": 30,                    # optional
       "placement": {"backfill": false},       # optional
@@ -129,6 +187,11 @@ def from_config(config: Mapping[str, Any]) -> list[Node]:
         "topology": "ring" | "full",   # optional, default "ring"
         "radius": 1,                   # optional, ring only
         "forwarding": "ring" | null    # optional, default "ring"
+      },
+      "sampling": {
+        "sample_size": 2, "retry_interval": 0.25,
+        "probe_timeout": 1.0,          # optional
+        "topology", "radius", "forwarding": as for gossip
       }
     }
     ```
@@ -160,30 +223,50 @@ def from_config(config: Mapping[str, Any]) -> list[Node]:
             seed=seed,
             lease_seconds=lease_seconds,
         )
-    if design == "gossip":
-        options = config.get("gossip", {})
-        ids = [spec.node_id for spec in workers]
-        layout = options.get("topology", "ring")
-        if layout == "ring":
-            neighborhoods = topology.ring_with_shortcuts(
-                ids, radius=int(options.get("radius", 1)), seed=seed
-            )
-        elif layout == "full":
-            neighborhoods = topology.full_mesh(ids)
-        else:
-            raise ValueError(f"unknown gossip topology {layout!r}")
-        forwarding_name = options.get("forwarding", "ring")
-        if forwarding_name not in ("ring", None):
-            raise ValueError(f"unknown forwarding policy {forwarding_name!r}")
-        return gossip(
-            workers,
+    if design in ("gossip", "sampling"):
+        options = config.get(design, {})
+        neighborhoods, forwarding = _peer_layout(workers, options, seed)
+        shared = dict(
             neighborhoods=neighborhoods,
             placement=placement,
-            forwarding=RingForwarding(ids) if forwarding_name == "ring" else None,
-            interval=float(options["interval"]),
-            max_staleness=float(options["max_staleness"]),
+            forwarding=forwarding,
             retry_interval=float(options["retry_interval"]),
             seed=seed,
             lease_seconds=lease_seconds,
         )
+        if design == "gossip":
+            return gossip(
+                workers,
+                interval=float(options["interval"]),
+                max_staleness=float(options["max_staleness"]),
+                **shared,
+            )
+        return sampling(
+            workers,
+            sample_size=int(options["sample_size"]),
+            probe_timeout=float(options.get("probe_timeout", 1.0)),
+            **shared,
+        )
     raise ValueError(f"unknown design {design!r}")
+
+
+def _peer_layout(
+    workers: Sequence[NodeSpec], options: Mapping[str, Any], seed: int
+) -> tuple[dict[NodeId, frozenset[NodeId]], ForwardingPolicy | None]:
+    """
+    Neighborhoods and forwarding from a gossip or sampling config section.
+    """
+    ids = [spec.node_id for spec in workers]
+    layout = options.get("topology", "ring")
+    if layout == "ring":
+        neighborhoods = topology.ring_with_shortcuts(
+            ids, radius=int(options.get("radius", 1)), seed=seed
+        )
+    elif layout == "full":
+        neighborhoods = topology.full_mesh(ids)
+    else:
+        raise ValueError(f"unknown topology {layout!r}")
+    forwarding_name = options.get("forwarding", "ring")
+    if forwarding_name not in ("ring", None):
+        raise ValueError(f"unknown forwarding policy {forwarding_name!r}")
+    return neighborhoods, RingForwarding(ids) if forwarding_name == "ring" else None

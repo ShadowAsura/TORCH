@@ -1,5 +1,14 @@
 """
-Compare the new full-mesh gossip against the recorded legacy global gossip.
+Compare a new design against the recorded legacy simulator on the same workloads.
+
+Designs (`--design`):
+
+* `global-gossip`: new gossip on a full mesh vs legacy global gossip.
+* `sampling`: new Sparrow-style sampling vs legacy sampling, both on a
+  ring with shortcuts (`--radius`) and probing `--sample-size - 1` peers.
+
+The new design always uses ring forwarding, with strict FIFO and with
+backfill placement.
 
 Every seed generates one workload that all designs run, so differences
 between designs are paired per seed. Prints mean scheduling delay with 95%
@@ -7,10 +16,10 @@ confidence intervals, the paired differences, mean rejected reservations,
 and mean network messages and bytes (bytes for the new code only: legacy
 had no message encoding). Run from the repository root:
 
-    python -m experiments.compare_with_legacy --seeds 100 --out results.json
+    python -m experiments.compare_with_legacy --design sampling --seeds 100
 
-Legacy results come from experiments/data/legacy_global_gossip.json,
-recorded by `experiments.record_legacy_baseline`; no legacy code runs here.
+Legacy results come from experiments/data/legacy_<design>.json, recorded
+by `experiments.record_legacy_baseline`; no legacy code runs here.
 """
 
 from __future__ import annotations
@@ -30,10 +39,12 @@ from torchsched.types.metrics import JobStarted, ReservationRejected
 from torchsched.types.models import GpuGroup, NodeSpec
 from torchsched.workloads import poisson_workload
 
-BASELINE = Path(__file__).resolve().parent / "data" / "legacy_global_gossip.json"
-DESIGNS = ("legacy", "strict", "backfill")
+DATA = Path(__file__).resolve().parent / "data"
+DESIGN_CHOICES = ("global-gossip", "sampling")
+COLUMNS = ("legacy", "strict", "backfill")
 # Settings that must match the recorded baseline for a fair comparison.
 SETUP = (
+    "design",
     "jobs",
     "arrival_rate",
     "l40_nodes",
@@ -42,13 +53,20 @@ SETUP = (
     "interval",
     "max_staleness",
     "retry_interval",
+    "radius",
+    "sample_size",
 )
+
+
+def baseline_path(design: str) -> Path:
+    return DATA / f"legacy_{design.replace('-', '_')}.json"
 
 
 def add_setup_arguments(parser: argparse.ArgumentParser) -> None:
     """
     Arguments shared with `experiments.record_legacy_baseline`.
     """
+    parser.add_argument("--design", choices=DESIGN_CHOICES, default="global-gossip")
     parser.add_argument("--seeds", type=int, default=100, help="number of seeds")
     parser.add_argument("--first-seed", type=int, default=0)
     parser.add_argument("--jobs", type=int, default=100)
@@ -59,6 +77,10 @@ def add_setup_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--interval", type=float, default=0.5, help="gossip interval")
     parser.add_argument("--max-staleness", type=float, default=3.0)
     parser.add_argument("--retry-interval", type=float, default=0.25)
+    parser.add_argument("--radius", type=int, default=1, help="ring radius (sampling)")
+    parser.add_argument(
+        "--sample-size", type=int, default=2, help="nodes per lookup, own included"
+    )
 
 
 def seeds(args) -> range:
@@ -79,23 +101,32 @@ def cluster(l40_nodes: int, a100_nodes: int) -> list[NodeSpec]:
 def run_new(seed: int, args, *, backfill: bool) -> tuple[float, int, int, int]:
     """
     Mean scheduling delay, rejected reservations, network messages, and
-    network bytes for the new full-mesh gossip with ring forwarding.
+    network bytes for the new design, with ring forwarding.
     """
     specs = cluster(args.l40_nodes, args.a100_nodes)
     ids = [spec.node_id for spec in specs]
-    sim = Simulator(
-        clusters.gossip(
+    shared = dict(
+        placement=FirstFit(backfill=backfill),
+        forwarding=RingForwarding(ids),
+        retry_interval=args.retry_interval,
+        seed=seed,
+    )
+    if args.design == "global-gossip":
+        nodes = clusters.gossip(
             specs,
             neighborhoods=topology.full_mesh(ids),
-            placement=FirstFit(backfill=backfill),
-            forwarding=RingForwarding(ids),
             interval=args.interval,
             max_staleness=args.max_staleness,
-            retry_interval=args.retry_interval,
-            seed=seed,
-        ),
-        latency=args.latency,
-    )
+            **shared,
+        )
+    else:
+        nodes = clusters.sampling(
+            specs,
+            neighborhoods=topology.ring_with_shortcuts(ids, radius=args.radius, seed=seed),
+            sample_size=args.sample_size,
+            **shared,
+        )
+    sim = Simulator(nodes, latency=args.latency)
     workload = poisson_workload(seed, args.jobs, args.arrival_rate)
     for index, submission in enumerate(workload):
         sim.submit(submission.job, at=submission.at, node_id=ids[index % len(ids)])
@@ -121,7 +152,10 @@ def load_baseline(args, parser: argparse.ArgumentParser) -> dict[int, dict]:
     """
     Recorded legacy rows by seed, after checking the setup matches.
     """
-    baseline = json.loads(BASELINE.read_text())
+    path = baseline_path(args.design)
+    if not path.exists():
+        parser.error(f"no recorded legacy baseline for {args.design} ({path})")
+    baseline = json.loads(path.read_text())
     mismatched = [
         f"--{key.replace('_', '-')} {getattr(args, key)} (baseline: {baseline['config'][key]})"
         for key in SETUP
@@ -153,7 +187,7 @@ def report(rows: list[dict]) -> None:
         f"{'':12s}{'mean delay':>12s}   {'95% CI':18s} "
         f"{'rejected':>9s} {'messages':>9s} {'KB':>8s}  (means per seed)"
     )
-    for design in DESIGNS:
+    for design in COLUMNS:
         center, low, high = confidence_interval([row[design] for row in rows])
         rejected = mean(row[f"{design}_rejected"] for row in rows)
         messages = mean(row[f"{design}_messages"] for row in rows)

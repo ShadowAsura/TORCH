@@ -1,12 +1,13 @@
 """
-Record legacy global-gossip results for `experiments.compare_with_legacy`.
+Record legacy simulator results for `experiments.compare_with_legacy`.
 
-Runs the legacy simulator for each seed and writes the mean scheduling
-delay, rejected reservations, and network messages, together with the setup
-and the commit, to experiments/data/legacy_global_gossip.json. Run from the
-repository root while the legacy modules still exist:
+Runs the legacy simulator's `--design` policy for each seed and writes the
+mean scheduling delay, rejected reservations, and network messages,
+together with the setup and the commit, to
+experiments/data/legacy_<design>.json. Run from the repository root while
+the legacy modules still exist:
 
-    python -m experiments.record_legacy_baseline --seeds 100
+    python -m experiments.record_legacy_baseline --design sampling --seeds 100
 
 After the legacy code is deleted, check out the recorded commit to rerun it.
 """
@@ -20,7 +21,7 @@ import subprocess
 import distributed as legacy_distributed
 import simulator as legacy_simulator
 from experiment import make_workload
-from experiments.compare_with_legacy import BASELINE, SETUP, add_setup_arguments, seeds
+from experiments.compare_with_legacy import SETUP, add_setup_arguments, baseline_path, seeds
 
 
 def legacy_cluster(l40_nodes: int, a100_nodes: int) -> list[legacy_simulator.Node]:
@@ -34,8 +35,10 @@ def legacy_cluster(l40_nodes: int, a100_nodes: int) -> list[legacy_simulator.Nod
 def run_legacy(nodes, seed: int, args) -> dict:
     jobs = make_workload(seed, args.jobs, args.arrival_rate)
     settings = legacy_distributed.Settings(
-        policy="global-gossip",
+        policy=args.design,
         seed=seed,
+        radius=args.radius,
+        sample_size=args.sample_size,
         update_interval=args.interval,
         max_staleness=args.max_staleness,
         latency=args.latency,
@@ -61,14 +64,15 @@ def main() -> None:
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
     ).stdout.strip()
-    BASELINE.parent.mkdir(exist_ok=True)
+    path = baseline_path(args.design)
+    path.parent.mkdir(exist_ok=True)
     payload = {
         "generated_from": head,
         "config": {key: getattr(args, key) for key in SETUP},
         "rows": rows,
     }
-    BASELINE.write_text(json.dumps(payload, indent=1) + "\n")
-    print(f"wrote {len(rows)} seeds to {BASELINE}")
+    path.write_text(json.dumps(payload, indent=1) + "\n")
+    print(f"wrote {len(rows)} seeds to {path}")
 
 
 if __name__ == "__main__":

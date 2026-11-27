@@ -1,0 +1,618 @@
+{
+ "generated_from": "ad164e6f4a66a4b18ab682d0df119d32568b0f4f",
+ "config": {
+  "design": "sampling",
+  "jobs": 100,
+  "arrival_rate": 5.0,
+  "l40_nodes": 6,
+  "a100_nodes": 6,
+  "latency": 0.02,
+  "interval": 0.5,
+  "max_staleness": 3.0,
+  "retry_interval": 0.25,
+  "radius": 1,
+  "sample_size": 2
+ },
+ "rows": [
+  {
+   "seed": 0,
+   "delay": 4.446499999999943,
+   "rejected": 53,
+   "messages": 16945
+  },
+  {
+   "seed": 1,
+   "delay": 6.796599999999963,
+   "rejected": 72,
+   "messages": 25658
+  },
+  {
+   "seed": 2,
+   "delay": 4.679199999999952,
+   "rejected": 69,
+   "messages": 17796
+  },
+  {
+   "seed": 3,
+   "delay": 3.8004999999999596,
+   "rejected": 39,
+   "messages": 14540
+  },
+  {
+   "seed": 4,
+   "delay": 3.3337999999999495,
+   "rejected": 28,
+   "messages": 12819
+  },
+  {
+   "seed": 5,
+   "delay": 4.2374999999999385,
+   "rejected": 48,
+   "messages": 16100
+  },
+  {
+   "seed": 6,
+   "delay": 4.203899999999965,
+   "rejected": 44,
+   "messages": 16007
+  },
+  {
+   "seed": 7,
+   "delay": 3.4559999999999484,
+   "rejected": 46,
+   "messages": 13230
+  },
+  {
+   "seed": 8,
+   "delay": 4.562499999999929,
+   "rejected": 53,
+   "messages": 17325
+  },
+  {
+   "seed": 9,
+   "delay": 4.90479999999994,
+   "rejected": 70,
+   "messages": 18574
+  },
+  {
+   "seed": 10,
+   "delay": 3.967499999999937,
+   "rejected": 49,
+   "messages": 15150
+  },
+  {
+   "seed": 11,
+   "delay": 4.8904999999999355,
+   "rejected": 57,
+   "messages": 18590
+  },
+  {
+   "seed": 12,
+   "delay": 6.629999999999916,
+   "rejected": 73,
+   "messages": 25050
+  },
+  {
+   "seed": 13,
+   "delay": 4.699399999999926,
+   "rejected": 55,
+   "messages": 17897
+  },
+  {
+   "seed": 14,
+   "delay": 4.25629999999994,
+   "rejected": 50,
+   "messages": 16244
+  },
+  {
+   "seed": 15,
+   "delay": 4.696299999999961,
+   "rejected": 39,
+   "messages": 17794
+  },
+  {
+   "seed": 16,
+   "delay": 5.310299999999931,
+   "rejected": 52,
+   "messages": 20189
+  },
+  {
+   "seed": 17,
+   "delay": 5.136799999999961,
+   "rejected": 54,
+   "messages": 19534
+  },
+  {
+   "seed": 18,
+   "delay": 5.220299999999949,
+   "rejected": 51,
+   "messages": 19814
+  },
+  {
+   "seed": 19,
+   "delay": 3.9475999999999374,
+   "rejected": 43,
+   "messages": 15088
+  },
+  {
+   "seed": 20,
+   "delay": 4.8927999999999345,
+   "rejected": 44,
+   "messages": 18564
+  },
+  {
+   "seed": 21,
+   "delay": 4.965399999999927,
+   "rejected": 60,
+   "messages": 18852
+  },
+  {
+   "seed": 22,
+   "delay": 5.965699999999912,
+   "rejected": 87,
+   "messages": 22566
+  },
+  {
+   "seed": 23,
+   "delay": 4.451999999999948,
+   "rejected": 49,
+   "messages": 16885
+  },
+  {
+   "seed": 24,
+   "delay": 5.747299999999945,
+   "rejected": 73,
+   "messages": 21774
+  },
+  {
+   "seed": 25,
+   "delay": 4.374199999999933,
+   "rejected": 40,
+   "messages": 16696
+  },
+  {
+   "seed": 26,
+   "delay": 4.985499999999946,
+   "rejected": 58,
+   "messages": 18940
+  },
+  {
+   "seed": 27,
+   "delay": 4.3346999999999385,
+   "rejected": 41,
+   "messages": 16436
+  },
+  {
+   "seed": 28,
+   "delay": 6.300399999999927,
+   "rejected": 74,
+   "messages": 23802
+  },
+  {
+   "seed": 29,
+   "delay": 2.9127999999999528,
+   "rejected": 30,
+   "messages": 11264
+  },
+  {
+   "seed": 30,
+   "delay": 5.430899999999971,
+   "rejected": 55,
+   "messages": 20592
+  },
+  {
+   "seed": 31,
+   "delay": 3.7068999999999424,
+   "rejected": 34,
+   "messages": 14172
+  },
+  {
+   "seed": 32,
+   "delay": 2.7225999999999586,
+   "rejected": 29,
+   "messages": 10488
+  },
+  {
+   "seed": 33,
+   "delay": 5.957299999999937,
+   "rejected": 74,
+   "messages": 22549
+  },
+  {
+   "seed": 34,
+   "delay": 5.071799999999944,
+   "rejected": 66,
+   "messages": 19234
+  },
+  {
+   "seed": 35,
+   "delay": 3.4448999999999446,
+   "rejected": 47,
+   "messages": 13212
+  },
+  {
+   "seed": 36,
+   "delay": 6.7666999999999256,
+   "rejected": 73,
+   "messages": 25521
+  },
+  {
+   "seed": 37,
+   "delay": 5.70789999999997,
+   "rejected": 55,
+   "messages": 21552
+  },
+  {
+   "seed": 38,
+   "delay": 5.605899999999921,
+   "rejected": 63,
+   "messages": 21267
+  },
+  {
+   "seed": 39,
+   "delay": 4.114299999999942,
+   "rejected": 41,
+   "messages": 15709
+  },
+  {
+   "seed": 40,
+   "delay": 5.299199999999917,
+   "rejected": 67,
+   "messages": 20121
+  },
+  {
+   "seed": 41,
+   "delay": 4.854699999999937,
+   "rejected": 48,
+   "messages": 18436
+  },
+  {
+   "seed": 42,
+   "delay": 4.322599999999958,
+   "rejected": 44,
+   "messages": 16438
+  },
+  {
+   "seed": 43,
+   "delay": 6.880799999999928,
+   "rejected": 88,
+   "messages": 26004
+  },
+  {
+   "seed": 44,
+   "delay": 4.628499999999936,
+   "rejected": 58,
+   "messages": 17605
+  },
+  {
+   "seed": 45,
+   "delay": 6.261999999999963,
+   "rejected": 67,
+   "messages": 23660
+  },
+  {
+   "seed": 46,
+   "delay": 4.74639999999994,
+   "rejected": 45,
+   "messages": 18032
+  },
+  {
+   "seed": 47,
+   "delay": 5.417899999999939,
+   "rejected": 59,
+   "messages": 20527
+  },
+  {
+   "seed": 48,
+   "delay": 5.65039999999995,
+   "rejected": 62,
+   "messages": 21402
+  },
+  {
+   "seed": 49,
+   "delay": 4.0297999999999385,
+   "rejected": 47,
+   "messages": 15399
+  },
+  {
+   "seed": 50,
+   "delay": 3.9929999999999373,
+   "rejected": 39,
+   "messages": 15240
+  },
+  {
+   "seed": 51,
+   "delay": 5.395699999999951,
+   "rejected": 64,
+   "messages": 20441
+  },
+  {
+   "seed": 52,
+   "delay": 5.903899999999917,
+   "rejected": 60,
+   "messages": 22332
+  },
+  {
+   "seed": 53,
+   "delay": 3.9320999999999393,
+   "rejected": 42,
+   "messages": 14998
+  },
+  {
+   "seed": 54,
+   "delay": 5.364599999999916,
+   "rejected": 76,
+   "messages": 20348
+  },
+  {
+   "seed": 55,
+   "delay": 4.638399999999956,
+   "rejected": 44,
+   "messages": 17642
+  },
+  {
+   "seed": 56,
+   "delay": 4.411399999999933,
+   "rejected": 54,
+   "messages": 16807
+  },
+  {
+   "seed": 57,
+   "delay": 5.591199999999927,
+   "rejected": 65,
+   "messages": 21231
+  },
+  {
+   "seed": 58,
+   "delay": 5.206799999999929,
+   "rejected": 76,
+   "messages": 19809
+  },
+  {
+   "seed": 59,
+   "delay": 5.607199999999931,
+   "rejected": 69,
+   "messages": 21286
+  },
+  {
+   "seed": 60,
+   "delay": 3.09019999999995,
+   "rejected": 27,
+   "messages": 11851
+  },
+  {
+   "seed": 61,
+   "delay": 3.3320999999999477,
+   "rejected": 32,
+   "messages": 12748
+  },
+  {
+   "seed": 62,
+   "delay": 5.4183999999999415,
+   "rejected": 49,
+   "messages": 20542
+  },
+  {
+   "seed": 63,
+   "delay": 3.830799999999949,
+   "rejected": 34,
+   "messages": 14629
+  },
+  {
+   "seed": 64,
+   "delay": 5.133399999999952,
+   "rejected": 57,
+   "messages": 19442
+  },
+  {
+   "seed": 65,
+   "delay": 6.172299999999958,
+   "rejected": 57,
+   "messages": 23324
+  },
+  {
+   "seed": 66,
+   "delay": 7.756399999999946,
+   "rejected": 82,
+   "messages": 29232
+  },
+  {
+   "seed": 67,
+   "delay": 7.478999999999939,
+   "rejected": 87,
+   "messages": 28220
+  },
+  {
+   "seed": 68,
+   "delay": 3.096099999999952,
+   "rejected": 41,
+   "messages": 11918
+  },
+  {
+   "seed": 69,
+   "delay": 5.234099999999916,
+   "rejected": 76,
+   "messages": 19933
+  },
+  {
+   "seed": 70,
+   "delay": 3.4650999999999574,
+   "rejected": 37,
+   "messages": 13313
+  },
+  {
+   "seed": 71,
+   "delay": 5.623299999999957,
+   "rejected": 54,
+   "messages": 21279
+  },
+  {
+   "seed": 72,
+   "delay": 3.668499999999986,
+   "rejected": 30,
+   "messages": 14005
+  },
+  {
+   "seed": 73,
+   "delay": 4.422199999999938,
+   "rejected": 40,
+   "messages": 16786
+  },
+  {
+   "seed": 74,
+   "delay": 4.189299999999938,
+   "rejected": 47,
+   "messages": 15959
+  },
+  {
+   "seed": 75,
+   "delay": 7.345399999999889,
+   "rejected": 107,
+   "messages": 27727
+  },
+  {
+   "seed": 76,
+   "delay": 4.53539999999993,
+   "rejected": 49,
+   "messages": 17252
+  },
+  {
+   "seed": 77,
+   "delay": 5.197799999999963,
+   "rejected": 64,
+   "messages": 19714
+  },
+  {
+   "seed": 78,
+   "delay": 3.11679999999995,
+   "rejected": 32,
+   "messages": 12009
+  },
+  {
+   "seed": 79,
+   "delay": 6.238599999999915,
+   "rejected": 80,
+   "messages": 23593
+  },
+  {
+   "seed": 80,
+   "delay": 1.7058999999999722,
+   "rejected": 29,
+   "messages": 6742
+  },
+  {
+   "seed": 81,
+   "delay": 5.240699999999943,
+   "rejected": 45,
+   "messages": 19891
+  },
+  {
+   "seed": 82,
+   "delay": 4.907399999999932,
+   "rejected": 45,
+   "messages": 18587
+  },
+  {
+   "seed": 83,
+   "delay": 5.267899999999932,
+   "rejected": 51,
+   "messages": 19952
+  },
+  {
+   "seed": 84,
+   "delay": 6.514599999999944,
+   "rejected": 62,
+   "messages": 24623
+  },
+  {
+   "seed": 85,
+   "delay": 5.632899999999953,
+   "rejected": 67,
+   "messages": 21327
+  },
+  {
+   "seed": 86,
+   "delay": 6.116199999999933,
+   "rejected": 79,
+   "messages": 23081
+  },
+  {
+   "seed": 87,
+   "delay": 3.2737999999999516,
+   "rejected": 36,
+   "messages": 12594
+  },
+  {
+   "seed": 88,
+   "delay": 3.7589999999999724,
+   "rejected": 40,
+   "messages": 14345
+  },
+  {
+   "seed": 89,
+   "delay": 5.962999999999989,
+   "rejected": 57,
+   "messages": 22565
+  },
+  {
+   "seed": 90,
+   "delay": 6.313499999999935,
+   "rejected": 61,
+   "messages": 23855
+  },
+  {
+   "seed": 91,
+   "delay": 5.793199999999947,
+   "rejected": 67,
+   "messages": 21891
+  },
+  {
+   "seed": 92,
+   "delay": 4.74289999999994,
+   "rejected": 47,
+   "messages": 18002
+  },
+  {
+   "seed": 93,
+   "delay": 5.002599999999937,
+   "rejected": 60,
+   "messages": 18988
+  },
+  {
+   "seed": 94,
+   "delay": 4.781299999999947,
+   "rejected": 60,
+   "messages": 18169
+  },
+  {
+   "seed": 95,
+   "delay": 4.538499999999929,
+   "rejected": 56,
+   "messages": 17330
+  },
+  {
+   "seed": 96,
+   "delay": 2.9974999999999516,
+   "rejected": 40,
+   "messages": 11475
+  },
+  {
+   "seed": 97,
+   "delay": 2.4675999999999596,
+   "rejected": 25,
+   "messages": 9563
+  },
+  {
+   "seed": 98,
+   "delay": 4.809599999999966,
+   "rejected": 53,
+   "messages": 18273
+  },
+  {
+   "seed": 99,
+   "delay": 4.044499999999948,
+   "rejected": 30,
+   "messages": 15410
+  }
+ ]
+}

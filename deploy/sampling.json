@@ -1,0 +1,74 @@
+{
+  "design": "sampling",
+  "seed": 0,
+  "placement": {
+    "backfill": true
+  },
+  "sampling": {
+    "topology": "ring",
+    "radius": 1,
+    "forwarding": "ring",
+    "sample_size": 2,
+    "retry_interval": 0.25,
+    "probe_timeout": 1.0
+  },
+  "workers": [
+    {
+      "id": "l40-1",
+      "gpus": [
+        {
+          "gpu_type": "L40",
+          "count": 2,
+          "vram_gb": 48
+        }
+      ]
+    },
+    {
+      "id": "l40-2",
+      "gpus": [
+        {
+          "gpu_type": "L40",
+          "count": 2,
+          "vram_gb": 48
+        }
+      ]
+    },
+    {
+      "id": "a100-1",
+      "gpus": [
+        {
+          "gpu_type": "A100",
+          "count": 2,
+          "vram_gb": 80
+        }
+      ]
+    },
+    {
+      "id": "mixed-1",
+      "gpus": [
+        {
+          "gpu_type": "L40",
+          "count": 1,
+          "vram_gb": 48
+        },
+        {
+          "gpu_type": "A100",
+          "count": 2,
+          "vram_gb": 80
+        }
+      ]
+    }
+  ],
+  "addresses": {
+    "l40-1": "http://l40-1:8000",
+    "l40-2": "http://l40-2:8000",
+    "a100-1": "http://a100-1:8000",
+    "mixed-1": "http://mixed-1:8000"
+  },
+  "published": {
+    "l40-1": "http://127.0.0.1:8301",
+    "l40-2": "http://127.0.0.1:8302",
+    "a100-1": "http://127.0.0.1:8303",
+    "mixed-1": "http://127.0.0.1:8304"
+  }
+}
