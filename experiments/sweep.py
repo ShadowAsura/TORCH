@@ -365,11 +365,19 @@ def write_html_report(
         ("mean_traffic_bytes", "Traffic (KB)"),
     )
 
-    def table(rows: list[dict]) -> str:
-        header = "".join(f"<th>{escape(label)}</th>" for _, label in columns)
+    def table(rows: list[dict], *, include_sweep: bool = False) -> str:
+        table_columns = columns
+        if include_sweep:
+            table_columns = (
+                *columns[:2],
+                ("sweep", "Parameter"),
+                ("value", "Value"),
+                *columns[2:],
+            )
+        header = "".join(f"<th>{escape(label)}</th>" for _, label in table_columns)
         body = "".join(
             "<tr>"
-            + "".join(f"<td>{cell(row[key], key)}</td>" for key, _ in columns)
+            + "".join(f"<td>{cell(row[key], key)}</td>" for key, _ in table_columns)
             + "</tr>"
             for row in rows
         )
@@ -411,7 +419,7 @@ figcaption {{ color: #6b7280; font-size: 0.85rem; margin-top: 0.25rem; }}
 <p>Means over seeds; raw rows and confidence intervals are in <code>results.json</code>.</p>
 <h2>Configuration</h2><ul>{config_items}</ul>
 <h2>Baseline comparison</h2>{table(baseline)}
-<h2>Parameter sweep results</h2>{table(sweep_rows) if sweep_rows else "<p>No parameter sweeps requested.</p>"}
+<h2>Parameter sweep results</h2>{table(sweep_rows, include_sweep=True) if sweep_rows else "<p>No parameter sweeps requested.</p>"}
 <h2>Charts</h2>{images}
 </body></html>
 """

@@ -184,7 +184,10 @@ def test_write_outputs_creates_machine_readable_results_and_report(tmp_path):
     assert len(result["rows"]) == 2 * len(cases)
     assert len(result["summary"]) == len(cases)
     assert (tmp_path / "rows.csv").read_text().startswith("case_index,")
-    assert "Baseline comparison" in (tmp_path / "index.html").read_text()
+    html = (tmp_path / "index.html").read_text()
+    assert "Baseline comparison" in html
+    assert "<th>Parameter</th><th>Value</th>" in html
+    assert "<td>interval</td><td>1.000</td>" in html
     assert (tmp_path / "charts" / "baseline_delay.svg").exists()
     assert (tmp_path / "charts" / "baseline_traffic_composition.svg").exists()
     assert (tmp_path / "charts" / "sweep_interval_backfill_delay.svg").exists()
