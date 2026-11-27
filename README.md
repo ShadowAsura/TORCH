@@ -107,27 +107,31 @@ python -m experiments.compare_with_legacy --design periodic --seeds 100
 
 ## Deploy
 
-Each design has a cluster config and a Compose file in `deploy/`. Every
-node is its own container, built from one image. Published ports bind to
-127.0.0.1 only, because the HTTP API has no authentication.
+`deploy/` has one cluster config and one Compose file for every design;
+`TORCH_DESIGN` picks the design. Every node is its own container, built
+from one image. Published ports bind to 127.0.0.1 only, because the HTTP API
+has no authentication.
 
 ```sh
-docker compose -f deploy/compose.gossip.yaml up --build -d
-python -m deploy.demo --cluster deploy/gossip.json
-docker compose -f deploy/compose.gossip.yaml down
+export TORCH_DESIGN=gossip
+docker compose -f deploy/compose.yaml up --build -d
+python -m deploy.demo --cluster deploy/cluster.json --design $TORCH_DESIGN
+docker compose -f deploy/compose.yaml down
 ```
 
 The demo submits a seeded workload, waits for every job to complete,
 checks that every GPU is released and no message failed, and prints
-per-job placements and the traffic. Swap `gossip` for `centralized`,
-`periodic` or `sampling`.
+per-job placements and the traffic. Set `TORCH_DESIGN` to `periodic` or
+`sampling` instead, or for `centralized` also set
+`COMPOSE_PROFILES=centralized` so the coordinator starts. Every design
+runs on the same four workers.
 
 Each node serves `GET /health`, `POST /messages` (node-to-node),
 `POST /jobs`, `GET /status`, `GET /observations` and `GET /metrics`. To run
 a node outside Docker:
 
 ```sh
-python -m torchsched.runtime.http --cluster deploy/gossip.json --node l40-1 --port 8000
+python -m torchsched.runtime.http --cluster deploy/cluster.json --design gossip --node l40-1 --port 8000
 ```
 
 ## Status

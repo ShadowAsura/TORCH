@@ -8,7 +8,7 @@ WORKDIR /app
 RUN python -m pip install --no-cache-dir "fastapi>=0.115,<1" "uvicorn>=0.30,<1" "httpx>=0.27,<1"
 
 COPY torchsched ./torchsched
-COPY deploy/*.json ./deploy/
+COPY deploy/cluster.json ./deploy/
 
 RUN useradd --create-home torch
 USER torch

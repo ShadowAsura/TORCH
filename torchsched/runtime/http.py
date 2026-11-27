@@ -8,9 +8,11 @@ one-event-at-a-time guarantee holds just as in the simulator.
 
 Run a node from a cluster config (see `torchsched.clusters.from_config`):
 
-    python -m torchsched.runtime.http --cluster deploy/centralized.json --node coordinator
+    python -m torchsched.runtime.http --cluster deploy/cluster.json --design centralized --node coordinator
 
-The config's `"addresses"` maps every node id to its base URL.
+The config's `"addresses"` maps every node id to its base URL. `--design`
+overrides the config's `"design"`, so one file can hold every design's
+section.
 """
 
 from __future__ import annotations
@@ -335,6 +337,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run one TORCH node over HTTP.")
     parser.add_argument("--cluster", required=True, help="cluster config JSON file")
     parser.add_argument("--node", required=True, help="this process's node id")
+    parser.add_argument("--design", help="override the config's design")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
@@ -346,6 +349,8 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     config = json.loads(Path(args.cluster).read_text())
+    if args.design:
+        config["design"] = args.design
     runtime = load_runtime(config, args.node, execution_scale=args.execution_scale)
     uvicorn.run(create_app(runtime), host=args.host, port=args.port, log_level="warning")
 

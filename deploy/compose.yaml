@@ -1,0 +1,80 @@
+# TORCH cluster: one container per node, all from one image, for any design.
+# CPU only; jobs are simulated. Published ports bind to 127.0.0.1 only.
+#
+#   export TORCH_DESIGN=gossip            # or periodic, sampling
+#   docker compose -f deploy/compose.yaml up --build -d
+#   python -m deploy.demo --cluster deploy/cluster.json --design $TORCH_DESIGN
+#   docker compose -f deploy/compose.yaml down
+#
+# The centralized design also runs the coordinator, which is in the
+# `centralized` profile:
+#
+#   export TORCH_DESIGN=centralized COMPOSE_PROFILES=centralized
+#
+# TORCH_EXECUTION_SCALE (default 0.1) multiplies job runtimes.
+#
+# Startup: under centralized, workers report their status as soon as they
+# start, so they wait for the coordinator to be healthy. Peer-to-peer designs
+# start together: early gossip or periodic pushes to peers that are not up
+# yet fail and the next round retries, and sampling sends nothing until jobs
+# arrive.
+
+x-node: &node
+  image: torchsched:local
+  pull_policy: never
+  init: true
+  entrypoint:
+    - python
+    - -m
+    - torchsched.runtime.http
+    - --host=0.0.0.0
+    - --port=8000
+    - --cluster=deploy/cluster.json
+    - --design=${TORCH_DESIGN:?set TORCH_DESIGN to centralized, gossip, periodic or sampling}
+    - --execution-scale=${TORCH_EXECUTION_SCALE:-0.1}
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+    interval: 2s
+    timeout: 3s
+    start_period: 10s
+    retries: 15
+
+x-worker: &worker
+  <<: *node
+  depends_on:
+    coordinator:
+      condition: service_healthy
+      required: false  # absent unless the centralized profile is active
+
+services:
+  coordinator:
+    <<: *node
+    profiles: [centralized]
+    command: ["--node=coordinator"]
+    ports: ["127.0.0.1:8100:8000"]
+
+  l40-1:
+    <<: *worker
+    # The one service that builds the image; `up --build` builds it before
+    # starting any container.
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    pull_policy: missing  # override the anchor's `never`
+    command: ["--node=l40-1"]
+    ports: ["127.0.0.1:8101:8000"]
+
+  l40-2:
+    <<: *worker
+    command: ["--node=l40-2"]
+    ports: ["127.0.0.1:8102:8000"]
+
+  a100-1:
+    <<: *worker
+    command: ["--node=a100-1"]
+    ports: ["127.0.0.1:8103:8000"]
+
+  mixed-1:
+    <<: *worker
+    command: ["--node=mixed-1"]
+    ports: ["127.0.0.1:8104:8000"]

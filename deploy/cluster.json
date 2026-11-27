@@ -1,7 +1,7 @@
 {
-  "design": "gossip",
   "seed": 0,
   "placement": {"backfill": true},
+  "centralized": {"coordinator": "coordinator"},
   "gossip": {
     "topology": "ring",
     "radius": 1,
@@ -9,6 +9,22 @@
     "interval": 0.5,
     "max_staleness": 3.0,
     "retry_interval": 0.25
+  },
+  "periodic": {
+    "topology": "ring",
+    "radius": 1,
+    "forwarding": "ring",
+    "interval": 0.5,
+    "max_staleness": 3.0,
+    "retry_interval": 0.25
+  },
+  "sampling": {
+    "topology": "ring",
+    "radius": 1,
+    "forwarding": "ring",
+    "sample_size": 2,
+    "retry_interval": 0.25,
+    "probe_timeout": 1.0
   },
   "workers": [
     {"id": "l40-1", "gpus": [{"gpu_type": "L40", "count": 2, "vram_gb": 48}]},
@@ -20,15 +36,17 @@
     ]}
   ],
   "addresses": {
+    "coordinator": "http://coordinator:8000",
     "l40-1": "http://l40-1:8000",
     "l40-2": "http://l40-2:8000",
     "a100-1": "http://a100-1:8000",
     "mixed-1": "http://mixed-1:8000"
   },
   "published": {
-    "l40-1": "http://127.0.0.1:8201",
-    "l40-2": "http://127.0.0.1:8202",
-    "a100-1": "http://127.0.0.1:8203",
-    "mixed-1": "http://127.0.0.1:8204"
+    "coordinator": "http://127.0.0.1:8100",
+    "l40-1": "http://127.0.0.1:8101",
+    "l40-2": "http://127.0.0.1:8102",
+    "a100-1": "http://127.0.0.1:8103",
+    "mixed-1": "http://127.0.0.1:8104"
   }
 }

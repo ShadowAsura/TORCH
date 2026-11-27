@@ -1,11 +1,11 @@
 """
 Submit a seeded workload to a running TORCH cluster and check the results.
 
-Start a cluster first (see the compose files in this folder), then run from
-the repository root:
+Start a cluster first (see compose.yaml in this folder), then run from the
+repository root with the same design:
 
-    python -m deploy.demo --cluster deploy/centralized.json
-    python -m deploy.demo --cluster deploy/gossip.json --jobs 30 --seed 3
+    python -m deploy.demo --cluster deploy/cluster.json --design centralized
+    python -m deploy.demo --cluster deploy/cluster.json --design gossip --jobs 30 --seed 3
 
 Jobs are submitted at their workload arrival times multiplied by
 `--execution-scale` (keep it equal to the cluster's TORCH_EXECUTION_SCALE).
@@ -75,6 +75,7 @@ def observations(client: httpx.Client, urls: dict[str, str]) -> list[dict]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--cluster", required=True, help="cluster config JSON")
+    parser.add_argument("--design", help="override the config's design")
     parser.add_argument("--jobs", type=int, default=20)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--arrival-rate", type=float, default=5.0, help="jobs per workload second")
@@ -83,12 +84,18 @@ def main() -> None:
     args = parser.parse_args()
 
     config = json.loads(Path(args.cluster).read_text())
-    urls = config["published"]
+    if args.design:
+        config["design"] = args.design
+    if not config.get("design"):
+        parser.error("the config has no design; pass --design")
+    workers = [worker["id"] for worker in config["workers"]]
     if config["design"] == "centralized":
         targets = [config.get("centralized", {}).get("coordinator", "coordinator")]
+        nodes = workers + targets
     else:
-        targets = [worker["id"] for worker in config["workers"]]
-    workers = [worker["id"] for worker in config["workers"]]
+        targets = nodes = workers
+    # The config may publish nodes this design does not run (the coordinator).
+    urls = {node_id: config["published"][node_id] for node_id in nodes}
 
     with httpx.Client(timeout=5) as client:
         wait_healthy(client, urls, timeout=60)
