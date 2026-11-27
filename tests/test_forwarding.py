@@ -16,7 +16,13 @@ from torchsched.runtime.sim import Simulator
 from torchsched.scheduler import Scheduler
 from torchsched.types.actions import Observe, Send, SetTimer
 from torchsched.types.events import JobSubmitted, Received, TimerFired
-from torchsched.types.messages import ForwardJob, LookupReply, LookupRequest, ReserveRequest
+from torchsched.types.messages import (
+    ForwardAck,
+    ForwardJob,
+    LookupReply,
+    LookupRequest,
+    ReserveRequest,
+)
 from torchsched.types.metrics import JobAccepted, JobCompleted, JobForwarded, PlacementRetried
 from torchsched.types.models import GpuGroup, Job, NodeSpec, Status
 
@@ -112,7 +118,7 @@ def test_unplaceable_head_is_forwarded_and_unblocks_the_queue():
     actions = h.answer(record("b", free=1))
     [forward] = sent(actions, ForwardJob)
     assert forward.to == "b"
-    assert forward.msg == ForwardJob(job("big", gpus=2), ("a",))
+    assert forward.msg == ForwardJob(job("big", gpus=2), ("a",), forward.msg.handoff_id)
     assert observed(actions, JobForwarded) == [JobForwarded("big", "b")]
     # "small" fits, so it stays, and forwarding the head starts a new round.
     assert not [f for f in sent(actions, ForwardJob) if f.msg.job.job_id == "small"]
@@ -123,21 +129,29 @@ def test_unplaceable_head_is_forwarded_and_unblocks_the_queue():
 
 def test_forwarded_job_is_owned_by_the_receiver_and_continues_the_lap():
     h = Harness("b")
-    actions = h.feed(Received("a", ForwardJob(job("big", gpus=2), ("a",))))
+    actions = h.feed(Received("a", ForwardJob(job("big", gpus=2), ("a",), "h1")))
     assert not observed(actions, JobAccepted)  # accepted once, at its origin
     assert h.lookup_id is not None
     [forward] = sent(h.answer(record("b", free=0)), ForwardJob)
     assert forward.to == "c"
     assert forward.msg.visited == ("a", "b")
-    # A duplicate of a job this scheduler owns is ignored.
+    # A resent handoff, or a second copy of a job this scheduler is
+    # placing, is only acknowledged.
     h2 = Harness("b")
-    h2.feed(Received("a", ForwardJob(job("x"), ("a",))))
-    assert h2.feed(Received("c", ForwardJob(job("x"), ("c",)))) == []
+    h2.feed(Received("a", ForwardJob(job("x"), ("a",), "h1")))
+    assert h2.lookup_id is not None
+    h2.lookup_id = None
+    assert h2.feed(Received("a", ForwardJob(job("x"), ("a",), "h1"))) == [
+        Send("a", ForwardAck("x", "h1"))
+    ]
+    assert h2.feed(Received("c", ForwardJob(job("x"), ("c",), "h2"))) == [
+        Send("c", ForwardAck("x", "h2"))
+    ]
 
 
 def test_lap_end_waits_for_the_retry_timer_then_starts_a_new_lap():
     h = Harness("c")
-    h.feed(Received("b", ForwardJob(job("big", gpus=2), ("a", "b"))))
+    h.feed(Received("b", ForwardJob(job("big", gpus=2), ("a", "b"), "h1")))
     actions = h.answer(record("c", free=0))
     # "a" already tried it this lap, so the job stays and waits.
     assert not sent(actions, ForwardJob)

@@ -13,7 +13,10 @@ from torchsched.placement.first_fit import FirstFit
 from torchsched.runtime.sim import Simulator
 from torchsched.types.messages import (
     CapacityAvailable,
+    FinishedAck,
+    ForwardAck,
     ForwardJob,
+    Heartbeat,
     JobFinished,
     LookupReply,
     LookupRequest,
@@ -40,6 +43,8 @@ SAMPLES = {
     StartRequest: StartRequest("res-1"),
     StartReply: StartReply("res-1", False, "expired"),
     JobFinished: JobFinished("j1", "res-1", True, (2, 9), None),
+    FinishedAck: FinishedAck("res-1"),
+    Heartbeat: Heartbeat(("res-1", "res-2")),
     ProbeRequest: ProbeRequest("p1"),
     ProbeReply: ProbeReply("p1", STATUS),
     StatusPush: StatusPush((STATUS, Status(NodeSpec("w2", [GpuGroup("T4", 4, 16.0)]), (4,), 1, 0, 0.0))),
@@ -47,7 +52,8 @@ SAMPLES = {
     CapacityAvailable: CapacityAvailable(),
     LookupRequest: LookupRequest("l1"),
     LookupReply: LookupReply("l1", (STATUS,)),
-    ForwardJob: ForwardJob(JOB, ("a", "b")),
+    ForwardJob: ForwardJob(JOB, ("a", "b"), "a:1:handoff-3"),
+    ForwardAck: ForwardAck("j1", "a:1:handoff-3"),
 }
 
 
@@ -69,7 +75,7 @@ def test_decoded_models_keep_their_exact_types():
     status = decode(encode(StatusPush((STATUS,)))).statuses[0]
     assert isinstance(status.free_gpus, tuple) and isinstance(status.spec.gpus, tuple)
     assert isinstance(status.spec.gpus[0], GpuGroup)
-    job = decode(encode(ForwardJob(JOB, ("a",)))).job
+    job = decode(encode(ForwardJob(JOB, ("a",), "h1"))).job
     assert isinstance(job.runtime_by_gpu, MappingProxyType)
     reply = decode(encode(ReserveReply("r", "j", False, reason="busy", status=STATUS)))
     assert reply.status == STATUS and reply.order_key is None

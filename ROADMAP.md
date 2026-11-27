@@ -26,19 +26,35 @@
 - **Measurements.** Per-type message counts and encoded bytes, rejections,
   scheduling delay, and an execution log for utilization and overbooking
   checks.
+- **Failure handling.** Resending with acknowledgements for every request
+  between nodes; worker heartbeats and incarnation checks to rerun jobs
+  from crashed workers; restartable nodes (boot-time incarnations over
+  HTTP); message loss and crash injection in the simulator; the three
+  legacy demonstration scenarios (`tests/test_scenarios.py`); and
+  `experiments/faults.py` to measure what faults cost. Faults are described
+  by scenario files (crashes, random crashes, partitions, message loss) that
+  run both in the simulator and in the Docker demo.
 
 ## Next
 
-1. **Failure handling.** The legacy simulator could crash and recover
-   workers and drop status messages. That has not been ported yet; the
-   gaps are marked with TODOs in `scheduler.py`. The work:
-   - detecting crashed workers through incarnation numbers
-   - timeouts for lost reserve replies
-   - fault injection in the simulator
-   - the three legacy demonstration scenarios: a stale-view conflict, a
-     crash with restart elsewhere, and status loss bridged by forwarding
-2. **SWIM membership.** It replaces static membership; the hooks are marked
-   with TODOs in the membership role and messages.
+1. **SWIM membership.** It replaces static membership; the hooks are marked
+   with TODOs in the membership role and messages. Until then, ring
+   forwarding keeps handing jobs to a crashed node, and each handoff takes
+   a full resend cycle (5 s) to be abandoned. A node that stays down
+   blocks the ring for good: jobs that must pass it never run (about 4% of
+   jobs with 2 permanent crashes; see the experiments README). SWIM's
+   suspicion (indirect probes before declaring a node dead) should also
+   replace the fixed heartbeat timeout, which is eager: about two missed
+   heartbeats interrupt a run, so lost messages alone cause a few
+   interruptions and duplicate runs (the 5% loss rows).
+2. **Remaining failure gaps**:
+   - jobs held by a crashed scheduler are lost; add a retry policy, for
+     example client resubmission or replicated ownership
+   - a duplicate run is not cancelled when the first run finishes
+   - the centralized coordinator never learns about a worker whose first
+     status report was lost; workers should re-report periodically
+   - the sets of finished jobs and seen handoffs grow without bound
+   - timeouts (1 s) are fixed and conservative next to a 20 ms network
 3. **An experiment runner and parameter sweeps.** This replaces legacy
    `experiment.py --policy all`. It would run every design on the same
    seeded workloads, sweep staleness, interval, sample size and radius, and
@@ -53,5 +69,4 @@
    fixture.
 7. **Course deliverables.** The IEEE report with UML diagrams and
    demonstration snapshots, the recorded presentation and slides, and the
-   division of work. Code and presentation are due December 3, the report
-   December 4.
+   division of work.

@@ -5,6 +5,7 @@ Builders that assemble nodes into a cluster for one scheduling design.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from functools import partial
 from typing import Any
 
 from torchsched import topology
@@ -40,27 +41,27 @@ def centralized(
     """
     if any(spec.node_id == coordinator for spec in workers):
         raise ValueError(f"worker id {coordinator!r} collides with the coordinator")
-    nodes = []
-    for spec in workers:
-        ctx = NodeContext(spec, incarnation=1, seed=seed)
-        nodes.append(
-            Node(
-                ctx,
-                worker=Worker(ctx, lease_seconds=lease_seconds),
-                membership=StaticMembership(),
-                dissemination=CentralizedDissemination(ctx, coordinator=coordinator),
-            )
+
+    def worker(spec: NodeSpec, incarnation: int) -> Node:
+        ctx = NodeContext(spec, incarnation=incarnation, seed=seed)
+        return Node(
+            ctx,
+            worker=Worker(ctx, lease_seconds=lease_seconds),
+            membership=StaticMembership(),
+            dissemination=CentralizedDissemination(ctx, coordinator=coordinator),
         )
-    ctx = NodeContext(NodeSpec(coordinator), incarnation=1, seed=seed)
-    nodes.append(
-        Node(
+
+    def coordinator_node(incarnation: int) -> Node:
+        ctx = NodeContext(NodeSpec(coordinator), incarnation=incarnation, seed=seed)
+        return Node(
             ctx,
             membership=StaticMembership(),
             dissemination=CentralizedDissemination(ctx, coordinator=coordinator),
             scheduler=Scheduler(ctx, placement=placement),
         )
-    )
-    return nodes
+
+    nodes = [_restartable(partial(worker, spec)) for spec in workers]
+    return [*nodes, _restartable(coordinator_node)]
 
 
 def gossip(
@@ -179,24 +180,37 @@ def _peer_to_peer(
     missing = {spec.node_id for spec in workers} - set(neighborhoods)
     if missing:
         raise ValueError(f"no neighborhood for {sorted(missing)}")
-    nodes = []
-    for spec in workers:
-        ctx = NodeContext(spec, incarnation=1, seed=seed)
-        nodes.append(
-            Node(
+
+    def node(spec: NodeSpec, incarnation: int) -> Node:
+        ctx = NodeContext(spec, incarnation=incarnation, seed=seed)
+        return Node(
+            ctx,
+            worker=Worker(ctx, lease_seconds=lease_seconds),
+            membership=StaticMembership(neighborhoods[spec.node_id]),
+            dissemination=dissemination(ctx),
+            scheduler=Scheduler(
                 ctx,
-                worker=Worker(ctx, lease_seconds=lease_seconds),
-                membership=StaticMembership(neighborhoods[spec.node_id]),
-                dissemination=dissemination(ctx),
-                scheduler=Scheduler(
-                    ctx,
-                    placement=placement,
-                    forwarding=forwarding,
-                    retry_interval=retry_interval,
-                ),
-            )
+                placement=placement,
+                forwarding=forwarding,
+                retry_interval=retry_interval,
+            ),
         )
-    return nodes
+
+    return [_restartable(partial(node, spec)) for spec in workers]
+
+
+def _restartable(make: Callable[[int], Node]) -> Node:
+    """
+    The first incarnation of a node. Every incarnation can rebuild itself
+    after a crash.
+    """
+
+    def build(incarnation: int) -> Node:
+        node = make(incarnation)
+        node.rebuild = build
+        return node
+
+    return build(1)
 
 
 def from_config(config: Mapping[str, Any]) -> list[Node]:

@@ -90,7 +90,12 @@ class GossipDissemination:
             if status.node_id not in neighbors or self._is_stale(status, now):
                 continue
             old = self.view.get(status.node_id)
-            if old is not None and status.order_key() <= old.order_key():
+            # Same version but observed later still counts as newer: an idle
+            # node's record must stay fresh, or it drops out of the view.
+            if old is not None and (status.order_key(), status.observed_at) <= (
+                old.order_key(),
+                old.observed_at,
+            ):
                 continue
             self.view[status.node_id] = status
             gained = gained or gained_capacity(old, status)

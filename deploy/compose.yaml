@@ -32,6 +32,9 @@ x-node: &node
     - --cluster=deploy/cluster.json
     - --design=${TORCH_DESIGN:?set TORCH_DESIGN to centralized, gossip, periodic or sampling}
     - --execution-scale=${TORCH_EXECUTION_SCALE:-0.1}
+    # The demo's scenarios drop messages through PUT /faults. Ports bind to
+    # 127.0.0.1 only, but drop this flag for anything beyond a local demo.
+    - --allow-fault-injection
   healthcheck:
     test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
     interval: 2s

@@ -38,11 +38,12 @@ from statistics import NormalDist, mean, stdev
 
 from torchsched import clusters, topology
 from torchsched.forwarding.ring import RingForwarding
+from torchsched.node import Node
 from torchsched.placement.first_fit import FirstFit
 from torchsched.runtime.sim import Simulator
 from torchsched.types.metrics import JobStarted, ReservationRejected
 from torchsched.types.models import GpuGroup, NodeSpec
-from torchsched.workloads import poisson_workload
+from torchsched.workloads import Submission, poisson_workload
 
 DATA = Path(__file__).resolve().parent / "data"
 DESIGN_CHOICES = ("global-gossip", "gossip", "periodic", "sampling")
@@ -107,10 +108,9 @@ def cluster(l40_nodes: int, a100_nodes: int) -> list[NodeSpec]:
     ]
 
 
-def run_new(seed: int, args, *, backfill: bool) -> tuple[float, int, int, int]:
+def build_nodes(args, seed: int, *, backfill: bool) -> list[Node]:
     """
-    Mean scheduling delay, rejected reservations, network messages, and
-    network bytes for the new design, with ring forwarding.
+    The new code's nodes for `args.design`, with ring forwarding.
     """
     specs = cluster(args.l40_nodes, args.a100_nodes)
     ids = [spec.node_id for spec in specs]
@@ -133,16 +133,32 @@ def run_new(seed: int, args, *, backfill: bool) -> tuple[float, int, int, int]:
         nodes = build(
             specs, interval=args.interval, max_staleness=args.max_staleness, **shared
         )
-    sim = Simulator(nodes, latency=args.latency)
+    return nodes
+
+
+def submit_workload(sim: Simulator, args, seed: int) -> list[Submission]:
+    """
+    The seed's workload, submitted round robin across nodes in cluster order.
+    """
+    ids = list(sim.nodes)
     workload = poisson_workload(seed, args.jobs, args.arrival_rate)
     for index, submission in enumerate(workload):
         sim.submit(submission.job, at=submission.at, node_id=ids[index % len(ids)])
+    return workload
+
+
+def run_new(seed: int, args, *, backfill: bool) -> tuple[float, int, int, int]:
+    """
+    Mean scheduling delay, rejected reservations, network messages, and
+    network bytes for the new design, with ring forwarding.
+    """
+    sim = Simulator(build_nodes(args, seed, backfill=backfill), latency=args.latency)
+    workload = submit_workload(sim, args, seed)
     result = sim.run(until=args.time_limit, until_jobs_done=True)
-    starts = {
-        o.metric.job_id: o.time
-        for o in result.observations
-        if isinstance(o.metric, JobStarted)
-    }
+    starts: dict[str, float] = {}
+    for o in result.observations:
+        if isinstance(o.metric, JobStarted):
+            starts.setdefault(o.metric.job_id, o.time)
     if len(starts) != len(workload):
         raise RuntimeError(f"seed {seed}: not every job started")
     delay = mean(starts[s.job.job_id] - s.at for s in workload)

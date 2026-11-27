@@ -31,6 +31,17 @@ full mesh. In all of them:
   ring, and waiting jobs retry on an interval.
 - Placement is first fit, either strict FIFO or with backfill.
 
+Every design tolerates lost messages and crashed nodes:
+
+- Requests between nodes (reserve, start, job handoffs, completions) are
+  resent until acknowledged, and given up on after a few tries.
+- Workers send heartbeats for running jobs. A scheduler that stops hearing
+  them, or sees the worker come back with a higher incarnation, reruns the
+  job elsewhere.
+- Jobs run at least once: a wrong guess that something was lost can run a
+  job twice, and the first run to finish counts. Jobs held by a crashed
+  scheduler are lost (reported, not yet retried).
+
 ## Layout
 
 | Path | Contents |
@@ -98,11 +109,38 @@ print(f"{done} jobs done by t={result.end_time:.1f} s, {sum(result.messages.valu
 execution (worker, GPUs, start and end), and message counts and encoded
 bytes by message type. Runs are deterministic for a given seed.
 
+`Simulator` can also inject faults, described by a scenario
+(`torchsched.scenarios`, usually loaded from a JSON file):
+
+```json
+{
+  "crashes": [{"node": "a100-1", "at": 5, "restart_at": 30}],
+  "random_crashes": {"count": 2, "downtime": 5},
+  "partitions": [{"nodes": ["l40-1", "l40-2"], "at": 10, "heal_at": 40}],
+  "losses": [{"probability": 0.05}, {"end": 3, "kinds": ["StatusPush"]}]
+}
+```
+
+- A crash takes a whole node down, optionally restarting it with empty
+  state.
+- Random crashes are picked per seed (`scenario.resolve(seed, ...)`).
+- A partition cuts nodes off from the rest (they still reach each other),
+  optionally healing later.
+- A loss drops messages by time window, type, sender or receiver,
+  optionally at random.
+
+`sim.apply(scenario)` injects a resolved scenario; `sim.crash(...)` and
+`Simulator(losses=..., partitions=...)` do the same piece by piece. Times
+are workload seconds, so the Docker demo runs the same files (examples in
+`deploy/scenarios/`).
+
 To compare a design with the legacy simulator's results on the same 100
-workloads, see [experiments/README.md](experiments/README.md):
+workloads, or to measure what faults cost it, see
+[experiments/README.md](experiments/README.md):
 
 ```sh
 python -m experiments.compare_with_legacy --design periodic --seeds 100
+python -m experiments.faults --design gossip --scenario experiments/scenarios/two-crashes-5s.json
 ```
 
 ## Deploy
@@ -126,9 +164,37 @@ per-job placements and the traffic. Set `TORCH_DESIGN` to `periodic` or
 `COMPOSE_PROFILES=centralized` so the coordinator starts. Every design
 runs on the same four workers.
 
+To inject faults during the demo, give it a scenario file (see Simulate
+above); random crashes are picked with `--seed`:
+
+```sh
+python -m deploy.demo --cluster deploy/cluster.json --design $TORCH_DESIGN \
+    --scenario deploy/scenarios/everything.json
+```
+
+- **Crashes** kill the node's container (`docker compose kill`); restarts
+  start it again with empty state.
+- **Partitions** disconnect the containers from the cluster network (a group
+  gets a network of its own), so the nodes keep running, and keep running
+  their jobs, but cannot reach anyone else. The demo cannot reach them
+  either, so in the demo every partition must heal.
+- **Losses** are injected in each node's runtime (`PUT /faults`), with the
+  same rules as in the simulator. Packet-level tools such as `tc netem`
+  would not do: TCP resends lost packets, so messages arrive late rather
+  than not at all, and the network cannot tell message types apart.
+
+Jobs go only to nodes the scenario never crashes or cuts off. The demo
+reports interrupted runs, abandoned requests, injected drops, failed sends,
+and the jobs lost with crashed nodes' schedulers, and still fails if any
+other job does not complete. Nodes talk over a fresh connection per
+message: a pooled keep-alive connection outlives a restarted peer or a
+healed partition, and requests on it fail or hang.
+
 Each node serves `GET /health`, `POST /messages` (node-to-node),
-`POST /jobs`, `GET /status`, `GET /observations` and `GET /metrics`. To run
-a node outside Docker:
+`POST /jobs`, `GET /jobs` (jobs its scheduler holds), `GET /status`,
+`GET /observations` and `GET /metrics`, and with `--allow-fault-injection`
+(set in compose.yaml for the demo) `PUT /faults`. To run a node outside
+Docker:
 
 ```sh
 python -m torchsched.runtime.http --cluster deploy/cluster.json --design gossip --node l40-1 --port 8000

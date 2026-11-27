@@ -8,7 +8,7 @@ from typing import ClassVar, Protocol
 
 from torchsched.types.actions import Action
 from torchsched.types.events import Event
-from torchsched.types.models import NodeId, Status
+from torchsched.types.models import JobId, NodeId, Status
 
 
 class Component(Protocol):
@@ -63,3 +63,9 @@ class SchedulerRole(Component, Protocol):
     """
     Owns submitted jobs: queues, places, forwards, retries, and reports.
     """
+
+    def owned_jobs(self) -> list[JobId]:
+        """
+        Jobs this scheduler is responsible for and has not finished.
+        """
+        ...
