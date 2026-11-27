@@ -110,6 +110,16 @@ def test_crashed_scheduler_loses_its_jobs():
     assert result.dropped["JobFinished"] == 5
 
 
+def test_a_node_can_crash_and_restart_repeatedly():
+    sim = cluster()
+    sim.crash("c", at=1.0, restart_at=2.0)
+    sim.crash("c", at=3.0, restart_at=4.0)
+    sim.submit(job("j1", runtime=1.0), at=6.0, node_id="c")
+    result = sim.run(until=100, until_jobs_done=True)
+    assert sim.nodes["c"].ctx.incarnation == 3
+    assert [o.metric for o in metrics(result, JobCompleted)] == [JobCompleted("j1", "c")]
+
+
 def test_crash_arguments_are_checked():
     sim = cluster()
     with pytest.raises(ValueError):

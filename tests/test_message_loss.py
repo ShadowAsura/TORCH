@@ -12,7 +12,8 @@ from torchsched.membership.static import StaticMembership
 from torchsched.node import Node, NodeContext
 from torchsched.placement.first_fit import FirstFit
 from torchsched.retransmit import Retransmitter
-from torchsched.runtime.sim import MessageLoss, Simulator
+from torchsched.runtime.sim import Simulator
+from torchsched.scenarios import MessageLoss
 from torchsched.scheduler import Scheduler
 from torchsched.types.actions import CancelTimer, Observe, Send, SetTimer
 from torchsched.types.events import JobSubmitted, Received, TimerFired

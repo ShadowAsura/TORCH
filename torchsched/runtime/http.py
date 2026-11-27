@@ -23,9 +23,10 @@ import json
 import logging
 import time
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
+from random import Random
 from typing import Any
 
 import httpx
@@ -35,6 +36,7 @@ from torchsched.clusters import from_config
 from torchsched.codec import decode, encode, from_data, to_data
 from torchsched.node import Node
 from torchsched.runtime.sim import Observation
+from torchsched.scenarios import MessageLoss, is_dropped, loss_from_data, loss_to_data
 from torchsched.types.actions import (
     Action,
     CancelTimer,
@@ -68,6 +70,11 @@ class HttpRuntime:
     one whose POST fails, is dropped and counted in `send_failures`, like a
     message lost on the network. `execution_scale` multiplies every job's
     runtime, so demos can run simulated jobs faster than real time.
+
+    With `fault_injection`, `inject` installs message losses (as in the
+    simulator, with times on this node's wall clock): matching messages are
+    counted as sent, then dropped and counted in `dropped` instead of being
+    posted. This is for chaos testing; the API exposes it only when enabled.
     """
 
     def __init__(
@@ -78,6 +85,7 @@ class HttpRuntime:
         execution_scale: float = 1.0,
         client: httpx.AsyncClient | None = None,
         timeout: float = 5.0,
+        fault_injection: bool = False,
     ):
         if execution_scale <= 0:
             raise ValueError("execution_scale must be positive")
@@ -92,6 +100,10 @@ class HttpRuntime:
         self.bytes_sent: Counter[str] = Counter()
         self.messages_received: Counter[str] = Counter()
         self.send_failures: Counter[str] = Counter()
+        self.fault_injection = fault_injection
+        self.losses: tuple[MessageLoss, ...] = ()
+        self.dropped: Counter[str] = Counter()
+        self._loss_rng = Random()
         self._queue: asyncio.Queue[Event] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._started_at = 0.0
@@ -122,7 +134,13 @@ class HttpRuntime:
         self._loop = asyncio.get_running_loop()
         self._started_at = self.now()
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout)
+            # No keep-alive: a pooled connection outlives the peer process or
+            # network it was opened to (after a restart, or a partition that
+            # healed), and requests on it fail or hang. A fresh connection
+            # per message always reaches the peer as it is now.
+            self._client = httpx.AsyncClient(
+                timeout=self._timeout, limits=httpx.Limits(max_keepalive_connections=0)
+            )
         self._queue = asyncio.Queue()
         self._consumer = asyncio.create_task(self._consume())
         self.deliver(Boot())
@@ -205,6 +223,11 @@ class HttpRuntime:
         body = encode(msg)
         self.messages_sent[kind] += 1
         self.bytes_sent[kind] += len(body)
+        if self.losses and is_dropped(
+            self.losses, (), self._loss_rng, self.now(), self.node_id, to, kind
+        ):
+            self.dropped[kind] += 1
+            return
         assert self._client is not None
         try:
             response = await self._client.post(
@@ -214,8 +237,27 @@ class HttpRuntime:
             )
             response.raise_for_status()
         except httpx.HTTPError as error:
-            self.send_failures[kind] += 1
-            log.warning("node %s: sending %s to %s failed: %s", self.node_id, kind, to, error)
+            self._failed(kind, to, error)
+
+    def _failed(self, kind: str, to: NodeId, error: Exception) -> None:
+        self.send_failures[kind] += 1
+        log.warning(
+            "node %s: sending %s to %s failed: %s: %s",
+            self.node_id,
+            kind,
+            to,
+            type(error).__name__,
+            error,
+        )
+
+    def inject(self, losses: Sequence[MessageLoss], seed: int | None = None) -> None:
+        """
+        Replace the injected message losses; `seed` seeds random drops.
+        """
+        if not self.fault_injection:
+            raise RuntimeError("fault injection is off")
+        self.losses = tuple(losses)
+        self._loss_rng = Random(seed)
 
     def metrics(self) -> dict[str, Any]:
         return {
@@ -225,6 +267,7 @@ class HttpRuntime:
             "bytes_sent": dict(self.bytes_sent),
             "messages_received": dict(self.messages_received),
             "send_failures": dict(self.send_failures),
+            "dropped": dict(self.dropped),
             "observations": len(self.observations),
         }
 
@@ -281,6 +324,16 @@ def create_app(runtime: HttpRuntime) -> FastAPI:
         runtime.deliver(JobSubmitted(job))
         return {"job_id": job.job_id, "node_id": runtime.node_id}
 
+    @app.get("/jobs")
+    async def jobs() -> dict:
+        """
+        Jobs this node's scheduler holds and has not finished (none for a
+        node without a scheduler).
+        """
+        require_started()
+        owned = runtime.node.scheduler.owned_jobs() if runtime.node.scheduler else []
+        return {"node_id": runtime.node_id, "jobs": sorted(owned)}
+
     @app.get("/status")
     async def status() -> dict:
         """
@@ -307,6 +360,30 @@ def create_app(runtime: HttpRuntime) -> FastAPI:
                 }
                 for o in entries
             ],
+        }
+
+    @app.put("/faults")
+    async def faults(request: Request) -> dict:
+        """
+        Replace the injected message losses: `{"losses": [...], "seed": 1}`,
+        each loss as in a scenario file, with times on this node's wall
+        clock. Only when the node runs with fault injection enabled.
+        """
+        require_started()
+        if not runtime.fault_injection:
+            raise HTTPException(403, "fault injection is off")
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or set(body) - {"losses", "seed"}:
+                raise ValueError('expected {"losses": [...], "seed": ...}')
+            losses = [loss_from_data(entry) for entry in body.get("losses", [])]
+            seed = body.get("seed")
+            runtime.inject(losses, None if seed is None else int(seed))
+        except (TypeError, ValueError) as error:
+            raise HTTPException(422, f"invalid faults: {error}") from None
+        return {
+            "node_id": runtime.node_id,
+            "losses": [loss_to_data(loss) for loss in runtime.losses],
         }
 
     @app.get("/metrics")
@@ -352,12 +429,22 @@ def main() -> None:
         default=1.0,
         help="multiply job runtimes by this (for example 0.1 for faster demos)",
     )
+    parser.add_argument(
+        "--allow-fault-injection",
+        action="store_true",
+        help="accept PUT /faults, which makes this node drop messages (chaos testing)",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     config = json.loads(Path(args.cluster).read_text())
     if args.design:
         config["design"] = args.design
-    runtime = load_runtime(config, args.node, execution_scale=args.execution_scale)
+    runtime = load_runtime(
+        config,
+        args.node,
+        execution_scale=args.execution_scale,
+        fault_injection=args.allow_fault_injection,
+    )
     uvicorn.run(create_app(runtime), host=args.host, port=args.port, log_level="warning")
 
 

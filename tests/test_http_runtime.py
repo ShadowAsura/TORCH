@@ -50,14 +50,18 @@ class RoutingTransport(httpx.AsyncBaseTransport):
 
 
 class Cluster:
-    def __init__(self, config, *, addresses=None, execution_scale=0.01):
+    def __init__(self, config, *, addresses=None, execution_scale=0.01, fault_injection=False):
         self.transport = RoutingTransport()
         self.client = httpx.AsyncClient(transport=self.transport, timeout=5)
         nodes = from_config(config)
         addresses = addresses or {n.node_id: f"http://{n.node_id}" for n in nodes}
         self.runtimes = {
             n.node_id: HttpRuntime(
-                n, addresses, execution_scale=execution_scale, client=self.client
+                n,
+                addresses,
+                execution_scale=execution_scale,
+                client=self.client,
+                fault_injection=fault_injection,
             )
             for n in nodes
         }
@@ -183,6 +187,58 @@ def test_unreachable_peers_count_as_send_failures():
             for worker in ("w-l40", "w-a100"):
                 metrics = (await cluster.client.get(f"http://{worker}/metrics")).json()
                 assert metrics["send_failures"] == {"StatusPush": 1}
+
+    asyncio.run(scenario())
+
+
+def test_jobs_lists_what_a_scheduler_holds():
+    async def scenario():
+        async with Cluster(CENTRALIZED) as cluster:
+            await cluster.submit("coordinator", job("j1", runtimes={"L40": 100.0}))
+            await asyncio.sleep(0.05)  # submissions are handled asynchronously
+            held = (await cluster.client.get("http://coordinator/jobs")).json()
+            assert held == {"node_id": "coordinator", "jobs": ["j1"]}
+            await cluster.wait_for_completions(1)
+            assert (await cluster.client.get("http://coordinator/jobs")).json()["jobs"] == []
+            # Workers in the centralized design do not schedule.
+            assert (await cluster.client.get("http://w-l40/jobs")).json()["jobs"] == []
+
+    asyncio.run(scenario())
+
+
+def test_fault_injection_is_off_unless_enabled():
+    async def scenario():
+        async with Cluster(CENTRALIZED) as cluster:
+            response = await cluster.client.put("http://w-l40/faults", json={"losses": []})
+            assert response.status_code == 403
+
+    asyncio.run(scenario())
+
+
+def test_injected_losses_drop_matching_messages():
+    async def scenario():
+        async with Cluster(CENTRALIZED, fault_injection=True) as cluster:
+            client = cluster.client
+            bad = await client.put("http://w-l40/faults", json={"losses": [{"kinds": "X"}]})
+            assert bad.status_code == 422
+            # Workers' status pushes to the coordinator are lost; the job
+            # still runs, since reservation replies carry status too.
+            await asyncio.sleep(0.05)  # let the boot pushes through first
+            faults = {"losses": [{"kinds": ["StatusPush"]}], "seed": 1}
+            for worker in ("w-l40", "w-a100"):
+                response = await client.put(f"http://{worker}/faults", json=faults)
+                assert response.json()["losses"] == [
+                    {"start": 0.0, "probability": 1.0, "kinds": ["StatusPush"]}
+                ]
+            await cluster.submit("coordinator", job("j1"))
+            [done] = await cluster.wait_for_completions(1)
+            await asyncio.sleep(0.05)  # the push after the job finished
+            metrics = (await client.get(f"http://{done['metric']['worker']}/metrics")).json()
+            assert metrics["dropped"]["StatusPush"] >= 1
+            assert metrics["send_failures"] == {}
+            # Cleared again: nothing more is dropped.
+            for worker in ("w-l40", "w-a100"):
+                await client.put(f"http://{worker}/faults", json={"losses": []})
 
     asyncio.run(scenario())
 

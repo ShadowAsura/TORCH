@@ -220,15 +220,20 @@ cost of the faults is paired per seed. Setup and arguments are as for
 `compare_with_legacy.py`; placement is backfill unless `--strict`.
 
 ```sh
-python -m experiments.faults --design gossip --loss 0.05
-python -m experiments.faults --design gossip --crashes 2 --downtime 5
-python -m experiments.faults --design sampling --crashes 2
+python -m experiments.faults --design gossip --scenario experiments/scenarios/loss-5pct.json
+python -m experiments.faults --design gossip --scenario experiments/scenarios/two-crashes-5s.json
+python -m experiments.faults --design sampling --scenario experiments/scenarios/two-crashes-permanent.json
+python -m experiments.faults --design gossip --scenario deploy/scenarios/split-brain.json
 ```
 
-`--loss P` drops every message with probability P, and
-`--status-loss-until T` drops status pushes until time T. `--crashes N`
-crashes N nodes, chosen per seed, at random times while jobs arrive; with
-`--downtime D` each restarts after D seconds, otherwise it stays down.
+The faults come from a scenario file (see `torchsched.scenarios` and the
+main README): named crashes, random crashes, partitions and message loss.
+Random crashes are picked per seed, uniformly among nodes and, by default,
+in time while jobs arrive. `experiments/scenarios/` has one file per row of
+the results below (`loss-5pct`, `two-crashes-5s`, `two-crashes-permanent`)
+and `status-loss-5s`. They replace the earlier `--loss`, `--crashes`,
+`--downtime` and `--status-loss-until` flags and draw exactly the same
+faults, so they reproduce these numbers.
 
 ### Fault results
 

@@ -14,7 +14,8 @@ The three demonstration scenarios from the legacy simulator, for the report.
 from torchsched import clusters, topology
 from torchsched.forwarding.ring import RingForwarding
 from torchsched.placement.first_fit import FirstFit
-from torchsched.runtime.sim import MessageLoss, Simulator
+from torchsched.runtime.sim import Simulator
+from torchsched.scenarios import MessageLoss
 from torchsched.types.metrics import (
     JobCompleted,
     JobInterrupted,

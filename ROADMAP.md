@@ -31,7 +31,9 @@
   from crashed workers; restartable nodes (boot-time incarnations over
   HTTP); message loss and crash injection in the simulator; the three
   legacy demonstration scenarios (`tests/test_scenarios.py`); and
-  `experiments/faults.py` to measure what faults cost.
+  `experiments/faults.py` to measure what faults cost. Faults are described
+  by scenario files (crashes, random crashes, partitions, message loss) that
+  run both in the simulator and in the Docker demo.
 
 ## Next
 
@@ -40,7 +42,11 @@
    forwarding keeps handing jobs to a crashed node, and each handoff takes
    a full resend cycle (5 s) to be abandoned. A node that stays down
    blocks the ring for good: jobs that must pass it never run (about 4% of
-   jobs with 2 permanent crashes; see the experiments README).
+   jobs with 2 permanent crashes; see the experiments README). SWIM's
+   suspicion (indirect probes before declaring a node dead) should also
+   replace the fixed heartbeat timeout, which is eager: about two missed
+   heartbeats interrupt a run, so lost messages alone cause a few
+   interruptions and duplicate runs (the 5% loss rows).
 2. **Remaining failure gaps**:
    - jobs held by a crashed scheduler are lost; add a retry policy, for
      example client resubmission or replicated ownership

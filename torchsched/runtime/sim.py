@@ -5,7 +5,6 @@ A deterministic discrete-event runtime for experiments and tests.
 from __future__ import annotations
 
 import heapq
-import math
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -14,6 +13,7 @@ from random import Random
 
 from torchsched.codec import encode
 from torchsched.node import Node
+from torchsched.scenarios import MessageLoss, Partition, Scenario, is_dropped
 from torchsched.types.actions import (
     Action,
     CancelTimer,
@@ -57,43 +57,6 @@ class Execution:
     interrupted: bool = False  # its worker crashed before it finished
 
 
-@dataclass(frozen=True)
-class MessageLoss:
-    """
-    Drop network messages sent during `[start, end)`.
-
-    Each matching message is dropped with `probability`. Leaving `kinds`
-    (message type names, such as "StatusPush"), `senders` or `receivers`
-    as None matches every value. Messages a node sends to itself are never
-    dropped.
-    """
-
-    start: float = 0.0
-    end: float = math.inf
-    probability: float = 1.0
-    kinds: frozenset[str] | None = None
-    senders: frozenset[NodeId] | None = None
-    receivers: frozenset[NodeId] | None = None
-
-    def __post_init__(self) -> None:
-        if not 0 <= self.probability <= 1:
-            raise ValueError("probability must be between 0 and 1")
-        for name in ("kinds", "senders", "receivers"):
-            value = getattr(self, name)
-            if value is not None:
-                if isinstance(value, str):
-                    raise TypeError(f"{name} must be a collection, not a string")
-                object.__setattr__(self, name, frozenset(value))
-
-    def matches(self, time: float, sender: NodeId, receiver: NodeId, kind: str) -> bool:
-        return (
-            self.start <= time < self.end
-            and (self.kinds is None or kind in self.kinds)
-            and (self.senders is None or sender in self.senders)
-            and (self.receivers is None or receiver in self.receivers)
-        )
-
-
 @dataclass
 class SimResult:
     end_time: float
@@ -134,8 +97,9 @@ class Simulator:
     itself arrives at the same time and is not counted as network traffic.
     An `Execute` finishes after the job's runtime on the reserved GPU type.
 
-    `losses` drop network messages; random drops use a stream seeded by
-    `seed`, so runs with losses are deterministic too.
+    `losses` drop network messages and `partitions` cut nodes off; random
+    drops use a stream seeded by `seed`, so runs with losses are
+    deterministic too.
 
     `crash` takes a whole node down, as when its machine fails: it handles
     nothing, messages to it are dropped, and its timers and running jobs
@@ -149,6 +113,7 @@ class Simulator:
         *,
         latency: float = 0.0,
         losses: Iterable[MessageLoss] = (),
+        partitions: Iterable[Partition] = (),
         seed: int = 0,
     ):
         if latency < 0:
@@ -160,6 +125,7 @@ class Simulator:
             self.nodes[node.node_id] = node
         self.latency = latency
         self.losses = tuple(losses)
+        self.partitions = tuple(partitions)
         self._loss_rng = Random(f"loss:{seed}")
         self.now = 0.0
         self.result = SimResult(end_time=0.0)
@@ -195,6 +161,21 @@ class Simulator:
             if node.rebuild is None:
                 raise ValueError(f"node {node_id!r} cannot be rebuilt")
         self._schedule(at, node_id, _Crash(restart_at))
+
+    def apply(self, scenario: Scenario) -> None:
+        """
+        Inject `scenario`'s faults: schedule its crashes and add its
+        partitions and losses. Resolve random crashes first
+        (`Scenario.resolve`).
+        """
+        if scenario.random_crashes is not None:
+            raise ValueError("resolve the scenario's random crashes first")
+        if unknown := scenario.nodes - set(self.nodes):
+            raise ValueError(f"the scenario names unknown nodes: {sorted(unknown)}")
+        for crash in scenario.crashes:
+            self.crash(crash.node, at=crash.at, restart_at=crash.restart_at)
+        self.partitions += scenario.partitions
+        self.losses += scenario.losses
 
     def run(
         self, until: float | None = None, *, until_jobs_done: bool = False
@@ -304,12 +285,9 @@ class Simulator:
                     )
 
     def _lost(self, sender: NodeId, receiver: NodeId, kind: str) -> bool:
-        for loss in self.losses:
-            if loss.matches(self.now, sender, receiver, kind) and (
-                loss.probability >= 1 or self._loss_rng.random() < loss.probability
-            ):
-                return True
-        return False
+        return is_dropped(
+            self.losses, self.partitions, self._loss_rng, self.now, sender, receiver, kind
+        )
 
     def _record_execution(
         self, node_id: NodeId, reservation_id: str, *, interrupted: bool = False

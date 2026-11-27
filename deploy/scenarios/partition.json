@@ -1,0 +1,5 @@
+{
+  "partitions": [
+    {"nodes": ["l40-2"], "at": 5, "heal_at": 45}
+  ]
+}

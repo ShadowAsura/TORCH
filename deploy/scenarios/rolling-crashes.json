@@ -1,0 +1,7 @@
+{
+  "crashes": [
+    {"node": "a100-1", "at": 5, "restart_at": 30},
+    {"node": "l40-2", "at": 10, "restart_at": 40},
+    {"node": "a100-1", "at": 50, "restart_at": 80}
+  ]
+}

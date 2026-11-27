@@ -201,11 +201,16 @@ def _peer_to_peer(
 
 def _restartable(make: Callable[[int], Node]) -> Node:
     """
-    The first incarnation of a node, able to rebuild itself after a crash.
+    The first incarnation of a node. Every incarnation can rebuild itself
+    after a crash.
     """
-    node = make(1)
-    node.rebuild = make
-    return node
+
+    def build(incarnation: int) -> Node:
+        node = make(incarnation)
+        node.rebuild = build
+        return node
+
+    return build(1)
 
 
 def from_config(config: Mapping[str, Any]) -> list[Node]:

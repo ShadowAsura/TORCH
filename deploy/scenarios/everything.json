@@ -1,0 +1,12 @@
+{
+  "crashes": [
+    {"node": "a100-1", "at": 5, "restart_at": 30}
+  ],
+  "partitions": [
+    {"nodes": ["l40-2"], "at": 10, "heal_at": 40}
+  ],
+  "losses": [
+    {"probability": 0.02},
+    {"end": 3, "kinds": ["StatusPush"]}
+  ]
+}

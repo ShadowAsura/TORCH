@@ -1,20 +1,14 @@
 """
 Measure what faults cost a design: the same workloads with and without them.
 
-Faults (any combination):
-
-* `--loss P`: drop every network message with probability P.
-* `--status-loss-until T`: drop every `StatusPush` until time T.
-* `--crashes N`: crash N distinct nodes (chosen per seed) at random times
-  while jobs arrive; with `--downtime D` each restarts D seconds later,
-  otherwise it stays down.
-
+The faults come from a scenario file (see `torchsched.scenarios`): named
+crashes, random crashes (picked per seed), partitions and message loss.
 Every seed runs one workload twice, without and with the faults, so the
 differences are paired. Placement is backfill unless `--strict`. Run from
 the repository root:
 
-    python -m experiments.faults --design gossip --crashes 2 --downtime 5
-    python -m experiments.faults --design sampling --loss 0.05
+    python -m experiments.faults --design gossip --scenario experiments/scenarios/two-crashes-5s.json
+    python -m experiments.faults --design sampling --scenario experiments/scenarios/loss-5pct.json
 
 Reports, as means per seed: jobs completed and lost (submitted to or owned
 by a crashed scheduler); scheduling delay (arrival to first start) and
@@ -28,17 +22,18 @@ from __future__ import annotations
 import argparse
 import time
 from collections import defaultdict
-from random import Random
 from statistics import mean
 
 from experiments.compare_with_legacy import (
     add_setup_arguments,
     build_nodes,
+    cluster,
     confidence_interval,
     seeds,
     submit_workload,
 )
-from torchsched.runtime.sim import MessageLoss, Simulator
+from torchsched.runtime.sim import Simulator
+from torchsched.scenarios import scenario_argument
 from torchsched.types.metrics import (
     JobCompleted,
     JobInterrupted,
@@ -51,19 +46,11 @@ COLUMNS = ("completed", "lost", "interrupted", "abandoned", "duplicated", "waste
 
 def run(seed: int, args, *, faults: bool) -> dict:
     sim = Simulator(
-        build_nodes(args, seed, backfill=not args.strict),
-        latency=args.latency,
-        losses=_losses(args) if faults else (),
-        seed=seed,
+        build_nodes(args, seed, backfill=not args.strict), latency=args.latency, seed=seed
     )
     workload = submit_workload(sim, args, seed)
-    if faults and args.crashes:
-        rng = Random(f"crashes:{seed}")
-        horizon = workload[-1].at
-        for node_id in rng.sample(sorted(sim.nodes), args.crashes):
-            at = rng.uniform(0, horizon)
-            restart = at + args.downtime if args.downtime is not None else None
-            sim.crash(node_id, at=at, restart_at=restart)
+    if faults:
+        sim.apply(args.scenario.resolve(seed, sim.nodes, horizon=workload[-1].at))
     result = sim.run(until=args.time_limit, until_jobs_done=True)
 
     arrival = {s.job.job_id: s.at for s in workload}
@@ -102,15 +89,6 @@ def run(seed: int, args, *, faults: bool) -> dict:
     }
 
 
-def _losses(args) -> list[MessageLoss]:
-    losses = []
-    if args.loss:
-        losses.append(MessageLoss(probability=args.loss))
-    if args.status_loss_until:
-        losses.append(MessageLoss(end=args.status_loss_until, kinds={"StatusPush"}))
-    return losses
-
-
 def report(pairs: list[tuple[dict, dict]], jobs: int) -> None:
     print(f"{'':10s}" + "".join(f"{c:>12s}" for c in COLUMNS) + "   (means per seed)")
     for label, index in (("no faults", 0), ("faults", 1)):
@@ -135,14 +113,13 @@ def report(pairs: list[tuple[dict, dict]], jobs: int) -> None:
 
 def add_fault_arguments(parser: argparse.ArgumentParser) -> None:
     """
-    The setup arguments plus placement and fault options.
+    The setup arguments plus placement and the scenario.
     """
     add_setup_arguments(parser)
     parser.add_argument("--strict", action="store_true", help="strict FIFO placement")
-    parser.add_argument("--loss", type=float, default=0.0, help="message loss probability")
-    parser.add_argument("--status-loss-until", type=float, default=0.0)
-    parser.add_argument("--crashes", type=int, default=0, help="nodes to crash per seed")
-    parser.add_argument("--downtime", type=float, help="restart crashed nodes after this")
+    parser.add_argument(
+        "--scenario", type=scenario_argument, required=True, help="scenario file of faults"
+    )
     parser.add_argument("--time-limit", type=float, default=10_000.0)
 
 
@@ -152,12 +129,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.seeds < 2:
         parser.error("--seeds must be at least 2")
-    if not 0 <= args.loss < 1:
-        parser.error("--loss must be in [0, 1)")
-    if args.downtime is not None and args.downtime <= 0:
-        parser.error("--downtime must be positive")
-    if not (args.loss or args.status_loss_until or args.crashes):
-        parser.error("choose at least one fault: --loss, --status-loss-until or --crashes")
+    ids = {spec.node_id for spec in cluster(args.l40_nodes, args.a100_nodes)}
+    if unknown := args.scenario.nodes - ids:
+        parser.error(f"the scenario names nodes not in the cluster: {sorted(unknown)}")
+    random_crashes = args.scenario.random_crashes
+    if random_crashes and random_crashes.count > len(ids - args.scenario.crashed):
+        parser.error("the scenario crashes more nodes than the cluster has")
 
     started = time.perf_counter()
     pairs = [(run(s, args, faults=False), run(s, args, faults=True)) for s in seeds(args)]
