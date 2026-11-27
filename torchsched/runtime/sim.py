@@ -5,10 +5,12 @@ A deterministic discrete-event runtime for experiments and tests.
 from __future__ import annotations
 
 import heapq
+import math
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import count
+from random import Random
 
 from torchsched.codec import encode
 from torchsched.node import Node
@@ -54,6 +56,43 @@ class Execution:
     end: float
 
 
+@dataclass(frozen=True)
+class MessageLoss:
+    """
+    Drop network messages sent during `[start, end)`.
+
+    Each matching message is dropped with `probability`. Leaving `kinds`
+    (message type names, such as "StatusPush"), `senders` or `receivers`
+    as None matches every value. Messages a node sends to itself are never
+    dropped.
+    """
+
+    start: float = 0.0
+    end: float = math.inf
+    probability: float = 1.0
+    kinds: frozenset[str] | None = None
+    senders: frozenset[NodeId] | None = None
+    receivers: frozenset[NodeId] | None = None
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.probability <= 1:
+            raise ValueError("probability must be between 0 and 1")
+        for name in ("kinds", "senders", "receivers"):
+            value = getattr(self, name)
+            if value is not None:
+                if isinstance(value, str):
+                    raise TypeError(f"{name} must be a collection, not a string")
+                object.__setattr__(self, name, frozenset(value))
+
+    def matches(self, time: float, sender: NodeId, receiver: NodeId, kind: str) -> bool:
+        return (
+            self.start <= time < self.end
+            and (self.kinds is None or kind in self.kinds)
+            and (self.senders is None or sender in self.senders)
+            and (self.receivers is None or receiver in self.receivers)
+        )
+
+
 @dataclass
 class SimResult:
     end_time: float
@@ -64,6 +103,8 @@ class SimResult:
     # so the HTTP runtime) would send them.
     message_bytes: Counter[str] = field(default_factory=Counter)
     undeliverable: int = 0  # messages addressed to unknown nodes
+    # network messages dropped by `MessageLoss`, by type (also in `messages`)
+    dropped: Counter[str] = field(default_factory=Counter)
 
 
 class Simulator:
@@ -76,9 +117,19 @@ class Simulator:
     Every network message takes `latency` seconds. A message a node sends to
     itself arrives at the same time and is not counted as network traffic.
     An `Execute` finishes after the job's runtime on the reserved GPU type.
+
+    `losses` drop network messages; random drops use a stream seeded by
+    `seed`, so runs with losses are deterministic too.
     """
 
-    def __init__(self, nodes: Iterable[Node], *, latency: float = 0.0):
+    def __init__(
+        self,
+        nodes: Iterable[Node],
+        *,
+        latency: float = 0.0,
+        losses: Iterable[MessageLoss] = (),
+        seed: int = 0,
+    ):
         if latency < 0:
             raise ValueError("latency must be nonnegative")
         self.nodes: dict[NodeId, Node] = {}
@@ -87,6 +138,8 @@ class Simulator:
                 raise ValueError(f"duplicate node {node.node_id!r}")
             self.nodes[node.node_id] = node
         self.latency = latency
+        self.losses = tuple(losses)
+        self._loss_rng = Random(f"loss:{seed}")
         self.now = 0.0
         self.result = SimResult(end_time=0.0)
         self._pq: list[tuple[float, int, NodeId, Event, int | None]] = []
@@ -148,6 +201,9 @@ class Simulator:
                         kind = type(msg).__name__
                         self.result.messages[kind] += 1
                         self.result.message_bytes[kind] += len(encode(msg))
+                        if self._lost(node_id, to, kind):
+                            self.result.dropped[kind] += 1
+                            continue
                         self._schedule(
                             self.now + self.latency, to, Received(node_id, msg)
                         )
@@ -169,6 +225,14 @@ class Simulator:
                     self.result.observations.append(
                         Observation(self.now, node_id, metric)
                     )
+
+    def _lost(self, sender: NodeId, receiver: NodeId, kind: str) -> bool:
+        for loss in self.losses:
+            if loss.matches(self.now, sender, receiver, kind) and (
+                loss.probability >= 1 or self._loss_rng.random() < loss.probability
+            ):
+                return True
+        return False
 
     def _record_execution(self, node_id: NodeId, reservation_id: str) -> None:
         job, group, start = self._running.pop((node_id, reservation_id))

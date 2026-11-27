@@ -42,6 +42,19 @@ class PlacementRetried:
 
 
 @dataclass(frozen=True, slots=True)
+class RequestAbandoned:
+    """
+    A request for a job got no reply after every resend, so the scheduler
+    gave up on it. `request` is the message type, for example
+    "ReserveRequest".
+    """
+
+    job_id: JobId
+    to: NodeId
+    request: str
+
+
+@dataclass(frozen=True, slots=True)
 class JobStarted:
     job_id: JobId
     worker: NodeId
@@ -71,6 +84,7 @@ Metric = (
     | JobForwarded
     | ReservationRejected
     | PlacementRetried
+    | RequestAbandoned
     | JobStarted
     | JobCompleted
     | JobFailed

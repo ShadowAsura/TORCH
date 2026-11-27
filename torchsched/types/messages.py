@@ -100,6 +100,15 @@ class JobFinished(Message):
 
 
 @dataclass(frozen=True, slots=True)
+class FinishedAck(Message):
+    """
+    Scheduler -> worker: `JobFinished` arrived, so stop resending it.
+    """
+
+    reservation_id: ReservationId
+
+
+@dataclass(frozen=True, slots=True)
 class ProbeRequest(Message):
     """
     Sampling-time state query (Sparrow-style).
@@ -190,6 +199,19 @@ class ForwardJob(Message):
 
     job: Job
     visited: tuple[NodeId, ...]  # schedulers that already tried this job, in order
+    # Unique per handoff and repeated when the same handoff is resent, so the
+    # receiver can tell a resend (ignore) from the job coming around again.
+    handoff_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ForwardAck(Message):
+    """
+    The receiving scheduler now owns the job, so the sender can forget it.
+    """
+
+    job_id: JobId
+    handoff_id: str
 
 
 # TODO: add SWIM membership messages (ping, ping-req, ack, join via introducers)

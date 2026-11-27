@@ -11,10 +11,13 @@ from typing import ClassVar
 
 from torchsched.interfaces.policies import ForwardingPolicy, PlacementPolicy
 from torchsched.node import NodeContext
+from torchsched.retransmit import Key, Retransmitter
 from torchsched.types.actions import Action, Observe, Send, SetTimer
 from torchsched.types.events import Event, JobSubmitted, Received, TimerFired
 from torchsched.types.messages import (
     CapacityAvailable,
+    FinishedAck,
+    ForwardAck,
     ForwardJob,
     JobFinished,
     LookupReply,
@@ -32,6 +35,7 @@ from torchsched.types.metrics import (
     JobForwarded,
     JobStarted,
     PlacementRetried,
+    RequestAbandoned,
     ReservationRejected,
 )
 from torchsched.types.models import (
@@ -51,6 +55,7 @@ class _Phase(Enum):
     RESERVING = "reserving"  # ReserveRequest in flight
     STARTING = "starting"  # reserved; StartRequest in flight
     RUNNING = "running"
+    FORWARDING = "forwarding"  # ForwardJob sent; waiting for its ForwardAck
 
 
 @dataclass
@@ -62,8 +67,26 @@ class _Job:
     group: GroupIndex | None = None
     gpu_type: GpuType | None = None
     reservation_id: ReservationId | None = None
+    request_id: str | None = None  # the ReserveRequest in flight, if RESERVING
+    handoff_id: str | None = None  # the ForwardJob in flight, if FORWARDING
     # Schedulers that tried this job on its current lap, ending with this one.
     visited: tuple[NodeId, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Held:
+    """
+    A reservation a worker granted this scheduler.
+
+    Kept until its `JobFinished` arrives, even if the scheduler gave up on
+    it (for example, no `StartReply` came back), because the job may be
+    running there anyway.
+    """
+
+    job_id: JobId
+    worker: NodeId
+    group: GroupIndex
+    gpu_count: int
 
 
 @dataclass(frozen=True)
@@ -105,6 +128,13 @@ class Scheduler:
     Views can lag behind the scheduler's own actions. So, we store
     the reservations and releases we initiated, and apply those as assumptions
     on top of views that predate them
+
+    Messages to other nodes can be lost. Reserve requests, start requests
+    and forwarded jobs are resent every `request_timeout` seconds until
+    answered, at most `max_sends` times in all; then the scheduler gives up
+    (`RequestAbandoned`) and queues the job again. Giving up can be wrong
+    when only the replies were lost, so a job may run more than once. The
+    first run to finish counts, and later ones are ignored.
     """
 
     name: ClassVar[str] = "scheduler"
@@ -117,6 +147,7 @@ class Scheduler:
             ReserveReply,
             StartReply,
             JobFinished,
+            ForwardAck,
         }
     )
 
@@ -127,6 +158,8 @@ class Scheduler:
         placement: PlacementPolicy,
         forwarding: ForwardingPolicy | None = None,
         retry_interval: float | None = None,
+        request_timeout: float = 1.0,
+        max_sends: int = 5,
     ):
         if retry_interval is not None and retry_interval <= 0:
             raise ValueError("retry_interval must be positive")
@@ -135,8 +168,14 @@ class Scheduler:
         self.forwarding = forwarding
         self.retry_interval = retry_interval
         self._jobs: dict[JobId, _Job] = {}
-        self._by_reservation: dict[ReservationId, JobId] = {}
+        # Jobs completed or failed here, and handoffs received, so that
+        # resent messages are not mistaken for new work.
+        # TODO: bound these sets' memory, for example by age.
+        self._done: set[JobId] = set()
+        self._handoffs_seen: set[str] = set()
+        self._by_reservation: dict[ReservationId, _Held] = {}
         self._reserving: dict[str, JobId] = {}  # request_id -> job
+        self._outbox = Retransmitter(timeout=request_timeout, max_sends=max_sends)
         self._assumed: list[_Assumed] = []
         self._lookup_id: str | None = None
         self._dirty = False  # something changed since the current round began
@@ -148,8 +187,10 @@ class Scheduler:
         match event:
             case JobSubmitted(job):
                 return self._submitted(job)
-            case Received(_, ForwardJob(job, visited)):
-                return self._received_forward(job, visited)
+            case Received(sender, ForwardJob() as forward):
+                return self._received_forward(sender, forward)
+            case Received(_, ForwardAck(job_id, handoff_id)):
+                return self._forward_acked(job_id, handoff_id)
             case Received(_, CapacityAvailable()):
                 return self._request_round()
             case Received(_, LookupReply() as reply):
@@ -162,6 +203,8 @@ class Scheduler:
                 return self._finished(sender, notice)
             case TimerFired(("retry",)):
                 return self._retry()
+            case TimerFired(("resend", *key)):
+                return self._resend(tuple(key))
         return []
 
     # ==================================================
@@ -169,9 +212,9 @@ class Scheduler:
     # ==================================================
 
     def _round_active(self) -> bool:
-        # TODO: handle lost replies. If a LookupReply or ReserveReply never
-        # arrives, the round stays open forever; add timeouts once the
-        # network can drop messages.
+        # The lookup goes to this node's own dissemination, so its reply is
+        # never lost. Reserve requests are resent and eventually abandoned,
+        # so a round always ends.
         return self._lookup_id is not None or bool(self._reserving)
 
     def _pending(self) -> list[_Job]:
@@ -219,19 +262,47 @@ class Scheduler:
     # ==================================================
 
     def _submitted(self, job: Job) -> list[Action]:
-        if job.job_id in self._jobs:
+        if job.job_id in self._jobs or job.job_id in self._done:
             return []
         self._track(job, (self.ctx.node_id,))
         return [Observe(JobAccepted(job.job_id)), *self._request_round()]
 
-    def _received_forward(
-        self, job: Job, visited: tuple[NodeId, ...]
-    ) -> list[Action]:
-        # Not counted as accepted again: it entered the system elsewhere.
-        if job.job_id in self._jobs:
-            return []
-        self._track(job, (*visited, self.ctx.node_id))
-        return self._request_round()
+    def _received_forward(self, sender: NodeId, forward: ForwardJob) -> list[Action]:
+        job = forward.job
+        # Acknowledge even duplicates: the sender's earlier ack may be lost.
+        actions: list[Action] = [Send(sender, ForwardAck(job.job_id, forward.handoff_id))]
+        if forward.handoff_id in self._handoffs_seen or job.job_id in self._done:
+            return actions  # a resend
+        self._handoffs_seen.add(forward.handoff_id)
+        visited = (*forward.visited, self.ctx.node_id)
+        tracked = self._jobs.get(job.job_id)
+        if tracked is None:
+            # Not counted as accepted again: it entered the system elsewhere.
+            self._track(job, visited)
+            return actions + self._request_round()
+        if tracked.phase is _Phase.FORWARDING:
+            # Our handoff got through (only its ack is missing), and the job
+            # has come back around the ring. It is ours again.
+            assert tracked.handoff_id is not None
+            actions += self._outbox.acknowledged(("forward", tracked.handoff_id))
+            tracked.phase = _Phase.PENDING
+            tracked.handoff_id = None
+            tracked.visited = visited
+            return actions + self._request_round()
+        # TODO: a second copy of a job this scheduler is placing, which only
+        # happens after an abandoned handoff that had in fact arrived.
+        return actions
+
+    def _forward_acked(self, job_id: JobId, handoff_id: str) -> list[Action]:
+        actions = self._outbox.acknowledged(("forward", handoff_id))
+        tracked = self._jobs.get(job_id)
+        if (
+            tracked is not None
+            and tracked.phase is _Phase.FORWARDING
+            and tracked.handoff_id == handoff_id
+        ):
+            del self._jobs[job_id]
+        return actions
 
     def _track(self, job: Job, visited: tuple[NodeId, ...]) -> None:
         self._jobs[job.job_id] = _Job(job, self._next_seq, visited=visited)
@@ -254,9 +325,10 @@ class Scheduler:
             tracked.worker = assignment.node_id
             tracked.group = assignment.group
             tracked.gpu_type = specs[assignment.node_id].gpus[assignment.group].gpu_type
+            tracked.request_id = request_id
             self._reserving[request_id] = assignment.job_id
             request = ReserveRequest(request_id, tracked.job, assignment.group)
-            actions.append(Send(assignment.node_id, request))
+            actions += self._outbox.send(("reserve", request_id), assignment.node_id, request)
         if self.forwarding is not None:
             actions += self._forward_unplaceable(pending, plan, candidates)
         return actions + self._round_step_done()
@@ -289,8 +361,11 @@ class Scheduler:
             hop = self.forwarding.next_hop(job, tracked.visited, neighbors)
             if hop is None:
                 continue  # lap over; wait for the retry timer
-            del self._jobs[job.job_id]
-            actions.append(Send(hop, ForwardJob(job, tracked.visited)))
+            # Keep the job until the hop acknowledges it, in case this is lost.
+            tracked.phase = _Phase.FORWARDING
+            tracked.handoff_id = self._new_id("handoff")
+            forward = ForwardJob(job, tracked.visited, tracked.handoff_id)
+            actions += self._outbox.send(("forward", tracked.handoff_id), hop, forward)
             actions.append(Observe(JobForwarded(job.job_id, hop)))
         if actions:
             # Forwarding a blocked head can unblock the jobs behind it.
@@ -329,25 +404,30 @@ class Scheduler:
     # ==================================================
 
     def _reserved(self, sender: NodeId, reply: ReserveReply) -> list[Action]:
+        actions = self._outbox.acknowledged(("reserve", reply.request_id))
         job_id = self._reserving.pop(reply.request_id, None)
         if job_id is None:
-            return []
+            # Abandoned or answered already. A late grant expires with its lease.
+            return actions
         tracked = self._jobs[job_id]
-        actions: list[Action] = []
+        tracked.request_id = None
         if reply.granted and reply.reservation_id is not None:
             group = reply.group if reply.group is not None else tracked.group
             assert group is not None and reply.order_key is not None
             tracked.group = group
             tracked.phase = _Phase.STARTING
             tracked.reservation_id = reply.reservation_id
-            self._by_reservation[reply.reservation_id] = job_id
+            self._by_reservation[reply.reservation_id] = _Held(
+                job_id, sender, group, tracked.job.gpu_count
+            )
             # Assume the reservation only now, keyed to the grant's version
             # (see `_Assumed`). Until the reply arrived, the open round kept
             # anything from being planned against these GPUs.
             self._assumed.append(
                 _Assumed(sender, group, -tracked.job.gpu_count, reply.order_key)
             )
-            actions.append(Send(sender, StartRequest(reply.reservation_id)))
+            start = StartRequest(reply.reservation_id)
+            actions += self._outbox.send(("start", reply.reservation_id), sender, start)
         else:
             tracked.phase = _Phase.PENDING
             reason = reply.reason or "reservation rejected"
@@ -361,27 +441,31 @@ class Scheduler:
         return actions + self._round_step_done()
 
     def _started(self, reply: StartReply) -> list[Action]:
-        job_id = self._by_reservation.get(reply.reservation_id)
-        if job_id is None:
-            return []
-        tracked = self._jobs[job_id]
-        if tracked.phase is not _Phase.STARTING:
-            return []
+        actions = self._outbox.acknowledged(("start", reply.reservation_id))
+        held = self._by_reservation.get(reply.reservation_id)
+        tracked = self._jobs.get(held.job_id) if held is not None else None
+        if (
+            tracked is None
+            or tracked.phase is not _Phase.STARTING
+            or tracked.reservation_id != reply.reservation_id
+        ):
+            return actions
         if not reply.started:
             # The reservation expired before the start arrived; try again.
             del self._by_reservation[reply.reservation_id]
             tracked.phase = _Phase.PENDING
-            return self._request_round()
+            tracked.reservation_id = None
+            return actions + self._request_round()
         tracked.phase = _Phase.RUNNING
         assert tracked.worker and tracked.group is not None and tracked.gpu_type
         started = JobStarted(
-            job_id,
+            tracked.job.job_id,
             tracked.worker,
             tracked.group,
             tracked.gpu_type,
             tracked.job.gpu_count,
         )
-        return [Observe(started)]
+        return [*actions, Observe(started)]
 
     # TODO: handle worker crashes. A job running on a worker that crashes is
     # never reported finished, so it is lost silently. One way to detect
@@ -389,19 +473,80 @@ class Scheduler:
     # worker restarted, so its jobs should be requeued (and recorded with a
     # new `JobInterrupted` metric).
     def _finished(self, sender: NodeId, notice: JobFinished) -> list[Action]:
-        job_id = self._by_reservation.pop(notice.reservation_id, None)
-        if job_id is None:
-            return []
-        tracked = self._jobs.pop(job_id)
-        assert tracked.group is not None
+        # Acknowledge even duplicates: the worker's earlier ack may be lost.
+        actions: list[Action] = [Send(sender, FinishedAck(notice.reservation_id))]
+        held = self._by_reservation.pop(notice.reservation_id, None)
+        if held is None:
+            return actions
         self._assumed.append(
-            _Assumed(sender, tracked.group, tracked.job.gpu_count, notice.order_key)
+            _Assumed(held.worker, held.group, held.gpu_count, notice.order_key)
         )
+        tracked = self._jobs.pop(held.job_id, None)
+        if tracked is None:
+            return actions  # a duplicate run of a job that already finished
+        # The first run to finish counts; stop whatever else the job was doing.
+        # TODO: cancel a duplicate run that is still going on another worker.
+        actions += self._stop_in_flight(tracked)
+        self._done.add(held.job_id)
         if notice.succeeded:
-            outcome: Action = Observe(JobCompleted(job_id, sender))
+            outcome: Action = Observe(JobCompleted(held.job_id, sender))
         else:
-            outcome = Observe(JobFailed(job_id, notice.reason or "execution failed"))
-        return [outcome, *self._request_round()]
+            outcome = Observe(JobFailed(held.job_id, notice.reason or "execution failed"))
+        return [*actions, outcome, *self._request_round()]
+
+    def _stop_in_flight(self, tracked: _Job) -> list[Action]:
+        """
+        Stop resending this job's outstanding request, if it has one.
+        """
+        if tracked.phase is _Phase.RESERVING and tracked.request_id is not None:
+            self._reserving.pop(tracked.request_id, None)
+            return self._outbox.acknowledged(("reserve", tracked.request_id))
+        if tracked.phase is _Phase.STARTING and tracked.reservation_id is not None:
+            return self._outbox.acknowledged(("start", tracked.reservation_id))
+        if tracked.phase is _Phase.FORWARDING and tracked.handoff_id is not None:
+            return self._outbox.acknowledged(("forward", tracked.handoff_id))
+        return []
+
+    # ==================================================
+    # Lost messages
+    # ==================================================
+
+    def _resend(self, key: Key) -> list[Action]:
+        actions, abandoned = self._outbox.timed_out(key)
+        if abandoned is None:
+            return actions
+        kind, ident = key
+        tracked: _Job | None = None
+        if kind == "reserve":
+            job_id = self._reserving.pop(ident, None)
+            tracked = self._jobs.get(job_id) if job_id is not None else None
+            if tracked is not None:
+                tracked.request_id = None
+        elif kind == "start":
+            held = self._by_reservation.get(ident)
+            tracked = self._jobs.get(held.job_id) if held is not None else None
+            if tracked is not None and tracked.reservation_id != ident:
+                tracked = None
+            # `held` stays: the job may be running, and its finish still counts.
+        elif kind == "forward":
+            assert isinstance(abandoned.msg, ForwardJob)
+            tracked = self._jobs.get(abandoned.msg.job.job_id)
+            if tracked is not None and tracked.handoff_id != ident:
+                tracked = None
+            if tracked is not None:
+                tracked.handoff_id = None
+        if tracked is None:
+            return self._round_step_done()
+        # The receiver may have acted on the request anyway, so the job may
+        # run twice; the first run to finish counts.
+        tracked.phase = _Phase.PENDING
+        tracked.reservation_id = None
+        tracked.visited = (self.ctx.node_id,)
+        request = type(abandoned.msg).__name__
+        return [
+            Observe(RequestAbandoned(tracked.job.job_id, abandoned.to, request)),
+            *self._request_round(),
+        ]
 
     def _new_id(self, kind: str) -> str:
         self._next_id += 1

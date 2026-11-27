@@ -28,6 +28,10 @@ class CentralizedDissemination:
     with all of them, in the order nodes were first heard from. Every other
     node only forwards its own changes. With no network delay, the
     coordinator's view is exact, which makes this the idealized baseline.
+
+    TODO: a lost push is only corrected by the worker's next change (or, for
+    changes the coordinator caused, by its scheduler's assumptions). A worker
+    whose boot push is lost stays invisible. Re-report periodically.
     """
 
     name: ClassVar[str] = "dissemination"

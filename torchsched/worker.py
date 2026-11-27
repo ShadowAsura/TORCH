@@ -8,9 +8,11 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from torchsched.node import NodeContext
+from torchsched.retransmit import Retransmitter
 from torchsched.types.actions import Action, CancelTimer, Execute, Send, SetTimer
 from torchsched.types.events import Event, ExecutionFinished, Received, TimerFired
 from torchsched.types.messages import (
+    FinishedAck,
     JobFinished,
     ReserveReply,
     ReserveRequest,
@@ -38,16 +40,26 @@ class Worker:
     A reservation that is not started within `lease_seconds` expires, so a
     scheduler that disappears cannot hold GPUs forever.
 
+    `JobFinished` is resent every `request_timeout` seconds until the
+    scheduler acknowledges it, at most `max_sends` times in all.
+
     Every change to free GPUs increments `version` and sends `StatusChanged`
     to this node's dissemination component.
     """
 
     name: ClassVar[str] = "worker"
     accepts: ClassVar[frozenset[type]] = frozenset(
-        {ReserveRequest, StartRequest, ExecutionFinished}
+        {ReserveRequest, StartRequest, ExecutionFinished, FinishedAck}
     )
 
-    def __init__(self, ctx: NodeContext, *, lease_seconds: float = 30.0):
+    def __init__(
+        self,
+        ctx: NodeContext,
+        *,
+        lease_seconds: float = 30.0,
+        request_timeout: float = 1.0,
+        max_sends: int = 5,
+    ):
         if not ctx.spec.gpus:
             raise ValueError("a worker needs at least one GPU group")
         if lease_seconds <= 0:
@@ -60,6 +72,7 @@ class Worker:
         # Granted requests by (scheduler, request_id), so a retried request
         # gets the same grant instead of a second reservation.
         self._granted: dict[tuple[NodeId, str], ReservationId] = {}
+        self._outbox = Retransmitter(timeout=request_timeout, max_sends=max_sends)
         self._next_id = 0
 
     def status(self, now: float) -> Status:
@@ -77,6 +90,12 @@ class Worker:
                 return self._finished(event, now)
             case TimerFired(("lease", reservation_id)):
                 return self._expire(reservation_id, now)
+            case Received(_, FinishedAck(reservation_id)):
+                return self._outbox.acknowledged(("finished", reservation_id))
+            case TimerFired(("resend", *key)):
+                # A scheduler that never acknowledges is gone; stop resending.
+                actions, _ = self._outbox.timed_out(tuple(key))
+                return actions
         return []
 
     def _reserve(
@@ -159,7 +178,8 @@ class Worker:
             (self.ctx.incarnation, self.version),
             event.reason,
         )
-        return [Send(held.holder, notice), self._changed(now)]
+        key = ("finished", event.reservation_id)
+        return [*self._outbox.send(key, held.holder, notice), self._changed(now)]
 
     def _expire(self, reservation_id: ReservationId, now: float) -> list[Action]:
         held = self._reservations.get(reservation_id)

@@ -77,7 +77,7 @@ def test_jobs_and_messages_containing_jobs_are_hashable():
     assert a == b and hash(a) == hash(b)
     assert len({a, b, job(job_id="j2")}) == 2
     assert hash(ReserveRequest("r1", a, 1)) == hash(ReserveRequest("r1", b, 1))
-    assert {ForwardJob(a, ("n1",)), ForwardJob(b, ("n1",))} == {ForwardJob(a, ("n1",))}
+    assert {ForwardJob(a, ("n1",), "h1"), ForwardJob(b, ("n1",), "h1")} == {ForwardJob(a, ("n1",), "h1")}
 
 
 def test_compatibility_considers_each_group_separately():

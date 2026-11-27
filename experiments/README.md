@@ -58,6 +58,8 @@ added the encoder without changing scheduling behavior.
 | | backfill | 4.757 | [4.551, 4.963] | 981 | 13,085 | — |
 | `77502f2` rejections carry worker status | strict FIFO | 4.886 | [4.631, 5.141] | 60 | 12,921 | 3,470 |
 | | backfill | 4.638 | [4.411, 4.865] | 55 | 12,387 | 3,357 |
+| _(next commit)_ acks for lost messages | strict FIFO | 4.886 | [4.631, 5.141] | 60 | 24,533 | 4,860 |
+| | backfill | 4.638 | [4.411, 4.865] | 55 | 23,490 | 4,685 |
 
 Paired differences against legacy (same workload per seed):
 
@@ -100,6 +102,8 @@ status record carries its node's full `NodeSpec`.
 | Legacy (`distributed.py`, sampling) | per job, no queue | 4.850 | [4.627, 5.073] | 54 | 18,423 | — |
 | `91dfae6` sampling ported | strict FIFO | 5.014 | [4.783, 5.245] | 6 | 9,664 | 1,827 |
 | | backfill | 4.881 | [4.650, 5.111] | 7 | 9,544 | 1,800 |
+| _(next commit)_ acks for lost messages | strict FIFO | 5.014 | [4.783, 5.245] | 6 | 15,569 | 2,526 |
+| | backfill | 4.881 | [4.650, 5.111] | 7 | 15,312 | 2,483 |
 
 | Version | Placement | Delay vs legacy | 95% CI | Slower on |
 | --- | --- | --- | --- | --- |
@@ -121,6 +125,8 @@ change any global-gossip number.
 | Legacy (`distributed.py`, gossip) | per job, no queue | 4.646 | [4.427, 4.865] | 208 | 12,935 | — |
 | `0abb0e6` first recorded | strict FIFO | 4.820 | [4.571, 5.070] | 24 | 12,788 | 2,966 |
 | | backfill | 4.583 | [4.354, 4.813] | 20 | 12,274 | 2,857 |
+| _(next commit)_ acks for lost messages | strict FIFO | 4.820 | [4.571, 5.070] | 24 | 24,344 | 4,349 |
+| | backfill | 4.583 | [4.354, 4.813] | 20 | 23,335 | 4,181 |
 
 | Version | Placement | Delay vs legacy | 95% CI | Slower on |
 | --- | --- | --- | --- | --- |
@@ -138,6 +144,8 @@ as fast as legacy, and strict FIFO costs a few percent.
 | Legacy (`distributed.py`, periodic) | per job, no queue | 4.649 | [4.425, 4.873] | 154 | 14,879 | — |
 | `0abb0e6` periodic ported | strict FIFO | 4.918 | [4.652, 5.183] | 41 | 15,062 | 3,174 |
 | | backfill | 4.594 | [4.362, 4.827] | 30 | 14,329 | 3,021 |
+| _(next commit)_ acks for lost messages | strict FIFO | 4.918 | [4.652, 5.183] | 41 | 26,814 | 4,580 |
+| | backfill | 4.594 | [4.362, 4.827] | 30 | 25,405 | 4,346 |
 
 | Version | Placement | Delay vs legacy | 95% CI | Slower on |
 | --- | --- | --- | --- | --- |
@@ -147,6 +155,17 @@ as fast as legacy, and strict FIFO costs a few percent.
 With backfill, delay matches legacy. Strict FIFO costs more here (about
 6%) than in the other designs. Porting periodic did not change any
 global-gossip or sampling number.
+
+#### Acknowledgements for lost messages (all designs)
+
+The _(next commit)_ rows above add resending for lost messages. Every
+`ForwardJob` is acknowledged with a `ForwardAck` and every `JobFinished`
+with a `FinishedAck`, and `ForwardJob` gained a handoff id. Without
+faults, nothing else changes: delay, its confidence interval, and
+rejections are identical in every design, so the paired differences are
+the same as in the previous rows. Messages rise by 60–90% and bytes by
+35–40%, mostly from acknowledging `ForwardJob`, which was already most of
+the traffic. Reducing forwarding laps (see above) would shrink both.
 
 ### Caveats
 
