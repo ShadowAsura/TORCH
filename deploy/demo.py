@@ -93,8 +93,8 @@ def main() -> None:
     with httpx.Client(timeout=5) as client:
         wait_healthy(client, urls, timeout=60)
         print(f"{config['design']} cluster healthy: {', '.join(urls)}")
-        if config["design"] == "gossip":
-            time.sleep(2 * config["gossip"]["interval"])  # let views fill in
+        if config["design"] in ("gossip", "periodic"):
+            time.sleep(2 * config[config["design"]]["interval"])  # let views fill in
 
         before = traffic(client, urls)
         workload = poisson_workload(args.seed, args.jobs, args.arrival_rate)

@@ -11,6 +11,7 @@ from torchsched import topology
 from torchsched.codec import from_data
 from torchsched.dissemination.centralized import CentralizedDissemination
 from torchsched.dissemination.gossip import GossipDissemination
+from torchsched.dissemination.periodic import PeriodicDissemination
 from torchsched.dissemination.sampling import SamplingDissemination
 from torchsched.forwarding.ring import RingForwarding
 from torchsched.interfaces.component import DisseminationRole
@@ -101,6 +102,36 @@ def gossip(
     )
 
 
+def periodic(
+    workers: Sequence[NodeSpec],
+    *,
+    neighborhoods: Mapping[NodeId, frozenset[NodeId]],
+    placement: PlacementPolicy,
+    forwarding: ForwardingPolicy | None,
+    interval: float,
+    max_staleness: float,
+    retry_interval: float,
+    seed: int = 0,
+    lease_seconds: float = 30.0,
+) -> list[Node]:
+    """
+    Like `gossip`, but every `interval` seconds each node sends only its own
+    status to every neighbor (Navigator-style bounded staleness).
+    """
+    return _peer_to_peer(
+        workers,
+        neighborhoods=neighborhoods,
+        placement=placement,
+        forwarding=forwarding,
+        retry_interval=retry_interval,
+        seed=seed,
+        lease_seconds=lease_seconds,
+        dissemination=lambda ctx: PeriodicDissemination(
+            ctx, interval=interval, max_staleness=max_staleness
+        ),
+    )
+
+
 def sampling(
     workers: Sequence[NodeSpec],
     *,
@@ -174,7 +205,7 @@ def from_config(config: Mapping[str, Any]) -> list[Node]:
 
     ```
     {
-      "design": "centralized" | "gossip" | "sampling",
+      "design": "centralized" | "gossip" | "periodic" | "sampling",
       "seed": 0,                              # optional
       "lease_seconds": 30,                    # optional
       "placement": {"backfill": false},       # optional
@@ -188,6 +219,7 @@ def from_config(config: Mapping[str, Any]) -> list[Node]:
         "radius": 1,                   # optional, ring only
         "forwarding": "ring" | null    # optional, default "ring"
       },
+      "periodic": {same keys as gossip},
       "sampling": {
         "sample_size": 2, "retry_interval": 0.25,
         "probe_timeout": 1.0,          # optional
@@ -223,7 +255,7 @@ def from_config(config: Mapping[str, Any]) -> list[Node]:
             seed=seed,
             lease_seconds=lease_seconds,
         )
-    if design in ("gossip", "sampling"):
+    if design in ("gossip", "periodic", "sampling"):
         options = config.get(design, {})
         neighborhoods, forwarding = _peer_layout(workers, options, seed)
         shared = dict(
@@ -234,8 +266,9 @@ def from_config(config: Mapping[str, Any]) -> list[Node]:
             seed=seed,
             lease_seconds=lease_seconds,
         )
-        if design == "gossip":
-            return gossip(
+        if design in ("gossip", "periodic"):
+            build = gossip if design == "gossip" else periodic
+            return build(
                 workers,
                 interval=float(options["interval"]),
                 max_staleness=float(options["max_staleness"]),
@@ -254,7 +287,7 @@ def _peer_layout(
     workers: Sequence[NodeSpec], options: Mapping[str, Any], seed: int
 ) -> tuple[dict[NodeId, frozenset[NodeId]], ForwardingPolicy | None]:
     """
-    Neighborhoods and forwarding from a gossip or sampling config section.
+    Neighborhoods and forwarding from a peer-to-peer design's config section.
     """
     ids = [spec.node_id for spec in workers]
     layout = options.get("topology", "ring")

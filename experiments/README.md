@@ -10,6 +10,8 @@ paired differences.
 | `--design` | New code | Legacy |
 | --- | --- | --- |
 | `global-gossip` (default) | gossip on a full mesh | global gossip |
+| `gossip` | gossip, ring with shortcuts | gossip, same ring |
+| `periodic` | periodic, ring with shortcuts | periodic, same ring |
 | `sampling` | sampling, ring with shortcuts | sampling, same ring |
 
 ```sh
@@ -36,9 +38,10 @@ behavior.
 
 Setup (the script's defaults): seeds 0–99, 100 jobs per seed, arrival rate
 5 jobs/s, 6 L40 + 6 A100 nodes with 2 GPUs each, 20 ms network latency,
-gossip every 0.5 s, 3 s staleness limit, 0.25 s retry interval; for
-sampling, ring radius 1 and sample size 2 (one random peer plus the node
-itself). Python 3.12.
+gossip or periodic pushes every 0.5 s, 3 s staleness limit, 0.25 s retry
+interval; ring radius 1 for every design except global gossip; for
+sampling, sample size 2 (one random peer plus the node itself). Python
+3.12.
 
 #### Global gossip (`--design global-gossip`)
 
@@ -110,6 +113,40 @@ of its waiting jobs, and the probe replies are fresh enough that few
 reservations fail. As with gossip, strict FIFO costs about 3% in delay
 because jobs wait behind a blocked queue head. Porting sampling did not
 change any global-gossip number.
+
+#### Gossip on a ring (`--design gossip`)
+
+| Version | Placement | Delay | 95% CI | Rejected | Messages | KB |
+| --- | --- | --- | --- | --- | --- | --- |
+| Legacy (`distributed.py`, gossip) | per job, no queue | 4.646 | [4.427, 4.865] | 208 | 12,935 | — |
+| _(next commit)_ first recorded | strict FIFO | 4.820 | [4.571, 5.070] | 24 | 12,788 | 2,966 |
+| | backfill | 4.583 | [4.354, 4.813] | 20 | 12,274 | 2,857 |
+
+| Version | Placement | Delay vs legacy | 95% CI | Slower on |
+| --- | --- | --- | --- | --- |
+| _(next commit)_ | strict FIFO | +0.174 s (+3.7%) | [+0.078, +0.269] | 64/100 seeds |
+| | backfill | −0.063 s (−1.4%) | [−0.152, +0.027] | 42/100 seeds |
+
+Ring gossip has been in the new code since `807785d`, but was first
+compared with legacy here. The pattern matches global gossip: backfill is
+as fast as legacy, and strict FIFO costs a few percent.
+
+#### Periodic (`--design periodic`)
+
+| Version | Placement | Delay | 95% CI | Rejected | Messages | KB |
+| --- | --- | --- | --- | --- | --- | --- |
+| Legacy (`distributed.py`, periodic) | per job, no queue | 4.649 | [4.425, 4.873] | 154 | 14,879 | — |
+| _(next commit)_ periodic ported | strict FIFO | 4.918 | [4.652, 5.183] | 41 | 15,062 | 3,174 |
+| | backfill | 4.594 | [4.362, 4.827] | 30 | 14,329 | 3,021 |
+
+| Version | Placement | Delay vs legacy | 95% CI | Slower on |
+| --- | --- | --- | --- | --- |
+| _(next commit)_ | strict FIFO | +0.269 s (+5.8%) | [+0.155, +0.382] | 63/100 seeds |
+| | backfill | −0.055 s (−1.2%) | [−0.135, +0.026] | 38/100 seeds |
+
+With backfill, delay matches legacy. Strict FIFO costs more here (about
+6%) than in the other designs. Porting periodic did not change any
+global-gossip or sampling number.
 
 ### Caveats
 

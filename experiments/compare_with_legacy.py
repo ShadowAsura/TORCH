@@ -4,6 +4,10 @@ Compare a new design against the recorded legacy simulator on the same workloads
 Designs (`--design`):
 
 * `global-gossip`: new gossip on a full mesh vs legacy global gossip.
+* `gossip`: new gossip vs legacy gossip, both on a ring with shortcuts
+  (`--radius`).
+* `periodic`: new periodic dissemination vs legacy periodic, both on a
+  ring with shortcuts (`--radius`).
 * `sampling`: new Sparrow-style sampling vs legacy sampling, both on a
   ring with shortcuts (`--radius`) and probing `--sample-size - 1` peers.
 
@@ -40,7 +44,7 @@ from torchsched.types.models import GpuGroup, NodeSpec
 from torchsched.workloads import poisson_workload
 
 DATA = Path(__file__).resolve().parent / "data"
-DESIGN_CHOICES = ("global-gossip", "sampling")
+DESIGN_CHOICES = ("global-gossip", "gossip", "periodic", "sampling")
 COLUMNS = ("legacy", "strict", "backfill")
 # Settings that must match the recorded baseline for a fair comparison.
 SETUP = (
@@ -74,10 +78,14 @@ def add_setup_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--l40-nodes", type=int, default=6)
     parser.add_argument("--a100-nodes", type=int, default=6)
     parser.add_argument("--latency", type=float, default=0.02)
-    parser.add_argument("--interval", type=float, default=0.5, help="gossip interval")
+    parser.add_argument(
+        "--interval", type=float, default=0.5, help="gossip or periodic push interval"
+    )
     parser.add_argument("--max-staleness", type=float, default=3.0)
     parser.add_argument("--retry-interval", type=float, default=0.25)
-    parser.add_argument("--radius", type=int, default=1, help="ring radius (sampling)")
+    parser.add_argument(
+        "--radius", type=int, default=1, help="ring radius (all but global-gossip)"
+    )
     parser.add_argument(
         "--sample-size", type=int, default=2, help="nodes per lookup, own included"
     )
@@ -112,19 +120,17 @@ def run_new(seed: int, args, *, backfill: bool) -> tuple[float, int, int, int]:
         seed=seed,
     )
     if args.design == "global-gossip":
-        nodes = clusters.gossip(
-            specs,
-            neighborhoods=topology.full_mesh(ids),
-            interval=args.interval,
-            max_staleness=args.max_staleness,
-            **shared,
-        )
+        shared["neighborhoods"] = topology.full_mesh(ids)
     else:
-        nodes = clusters.sampling(
-            specs,
-            neighborhoods=topology.ring_with_shortcuts(ids, radius=args.radius, seed=seed),
-            sample_size=args.sample_size,
-            **shared,
+        shared["neighborhoods"] = topology.ring_with_shortcuts(
+            ids, radius=args.radius, seed=seed
+        )
+    if args.design == "sampling":
+        nodes = clusters.sampling(specs, sample_size=args.sample_size, **shared)
+    else:
+        build = clusters.periodic if args.design == "periodic" else clusters.gossip
+        nodes = build(
+            specs, interval=args.interval, max_staleness=args.max_staleness, **shared
         )
     sim = Simulator(nodes, latency=args.latency)
     workload = poisson_workload(seed, args.jobs, args.arrival_rate)

@@ -37,6 +37,7 @@ class GossipDissemination:
     accepts: ClassVar[frozenset[type]] = frozenset(
         {StatusChanged, StatusPush, LookupRequest}
     )
+    timer: ClassVar[tuple[str]] = ("gossip",)
 
     def __init__(self, ctx: NodeContext, *, interval: float, max_staleness: float):
         if interval <= 0:
@@ -54,9 +55,9 @@ class GossipDissemination:
         match event:
             case Boot():
                 self._own = self.ctx.local_status(now)
-                return self._gossip(now)
-            case TimerFired(("gossip",)):
-                return self._gossip(now)
+                return self._tick(now)
+            case TimerFired(key) if key == self.timer:
+                return self._tick(now)
             case Received(_, StatusChanged(status)):
                 gained = gained_capacity(self._own, status)
                 self._own = status
@@ -67,16 +68,20 @@ class GossipDissemination:
                 return [Send(sender, LookupReply(lookup_id, self._candidates(now)))]
         return []
 
-    def _gossip(self, now: float) -> list[Action]:
-        actions: list[Action] = [SetTimer(("gossip",), self.interval)]
+    def _tick(self, now: float) -> list[Action]:
+        actions: list[Action] = [SetTimer(self.timer, self.interval)]
         peers = sorted(self.ctx.neighbors())
         own = self.ctx.local_status(now)
-        if not peers or own is None:
-            return actions
-        target = self._rng.choice(peers)
-        payload = (own, *self._fresh(now))
-        actions.append(Send(target, StatusPush(payload)))
+        if peers and own is not None:
+            actions += self._push(own, peers, now)
         return actions
+
+    def _push(self, own: Status, peers: list[NodeId], now: float) -> list[Action]:
+        """
+        This interval's pushes, given this node's status and its sorted peers.
+        """
+        target = self._rng.choice(peers)
+        return [Send(target, StatusPush((own, *self._fresh(now))))]
 
     def _store(self, statuses: tuple[Status, ...], now: float) -> list[Action]:
         neighbors = self.ctx.neighbors()

@@ -1,0 +1,70 @@
+# TORCH periodic cluster: one container per node, all from one image.
+# CPU only; jobs are simulated. Published ports bind to 127.0.0.1 only.
+#
+#   docker compose -f deploy/compose.periodic.yaml up --build -d
+#   python -m deploy.demo --cluster deploy/periodic.json
+#   docker compose -f deploy/compose.periodic.yaml down
+#
+# TORCH_EXECUTION_SCALE (default 0.1) multiplies job runtimes.
+# The first node's service builds the image; `up --build` builds it before
+# starting any container. Nodes start together; periodic pushes tolerate
+# peers that are not up yet (those early pushes fail and the next interval
+# retries).
+services:
+  l40-1:
+    image: torchsched:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    init: true
+    command: ["--cluster", "deploy/periodic.json", "--node", "l40-1", "--execution-scale", "${TORCH_EXECUTION_SCALE:-0.1}"]
+    ports:
+      - "127.0.0.1:8401:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 2s
+      timeout: 3s
+      start_period: 10s
+      retries: 15
+
+  l40-2:
+    image: torchsched:local
+    pull_policy: never
+    init: true
+    command: ["--cluster", "deploy/periodic.json", "--node", "l40-2", "--execution-scale", "${TORCH_EXECUTION_SCALE:-0.1}"]
+    ports:
+      - "127.0.0.1:8402:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 2s
+      timeout: 3s
+      start_period: 10s
+      retries: 15
+
+  a100-1:
+    image: torchsched:local
+    pull_policy: never
+    init: true
+    command: ["--cluster", "deploy/periodic.json", "--node", "a100-1", "--execution-scale", "${TORCH_EXECUTION_SCALE:-0.1}"]
+    ports:
+      - "127.0.0.1:8403:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 2s
+      timeout: 3s
+      start_period: 10s
+      retries: 15
+
+  mixed-1:
+    image: torchsched:local
+    pull_policy: never
+    init: true
+    command: ["--cluster", "deploy/periodic.json", "--node", "mixed-1", "--execution-scale", "${TORCH_EXECUTION_SCALE:-0.1}"]
+    ports:
+      - "127.0.0.1:8404:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 2s
+      timeout: 3s
+      start_period: 10s
+      retries: 15
