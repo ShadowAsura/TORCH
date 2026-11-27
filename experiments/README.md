@@ -11,7 +11,7 @@ baseline.
 ```sh
 python -m experiments.sweep --out results/baseline
 python -m experiments.sweep --out results/sweeps --seeds 100 \
-    --sweep max-staleness=1,3,6 --sweep interval=0.25,0.5,1 \
+    --sweep max-staleness=0.5,1,3 --sweep interval=0.25,0.5,1 \
     --sweep sample-size=2,3,4 --sweep radius=1,2,3
 ```
 
@@ -20,7 +20,10 @@ sampling with both strict FIFO and backfill placement. Every case uses the
 same workload for a given seed: centralized jobs enter through the
 coordinator, while peer-to-peer jobs enter round-robin over the workers.
 `--designs`, `--placement`, `--jobs`, `--arrival-rate`, cluster sizes,
-network latency and protocol settings are configurable. Independent runs
+network latency and protocol settings are configurable. Include staleness
+values near or below the push interval if the sweep should exercise expired
+records; values much larger than the interval mostly measure the baseline.
+Independent runs
 use up to four worker processes by default; raise or lower that with
 `--processes`.
 

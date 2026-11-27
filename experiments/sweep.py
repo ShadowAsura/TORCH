@@ -7,7 +7,7 @@ setting stays at its baseline; repeat it for several parameters:
 
     python -m experiments.sweep --out results/baseline
     python -m experiments.sweep --out results/sweeps --seeds 100 \
-        --sweep max-staleness=1,3,6 --sweep interval=0.25,0.5,1 \
+        --sweep max-staleness=0.5,1,3 --sweep interval=0.25,0.5,1 \
         --sweep sample-size=2,3,4 --sweep radius=1,2,3
 
 The output directory gets raw per-seed rows, per-case summary statistics, an
