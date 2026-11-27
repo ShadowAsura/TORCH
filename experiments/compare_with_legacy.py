@@ -23,7 +23,8 @@ had no message encoding). Run from the repository root:
     python -m experiments.compare_with_legacy --design sampling --seeds 100
 
 Legacy results come from experiments/data/legacy_<design>.json, recorded
-by `experiments.record_legacy_baseline`; no legacy code runs here.
+by `experiments.record_legacy_baseline` at commit `0abb0e6`, the last one
+with the legacy code; no legacy code runs here.
 """
 
 from __future__ import annotations
@@ -68,7 +69,7 @@ def baseline_path(design: str) -> Path:
 
 def add_setup_arguments(parser: argparse.ArgumentParser) -> None:
     """
-    Arguments shared with `experiments.record_legacy_baseline`.
+    The workload and cluster setup, plus which seeds to run.
     """
     parser.add_argument("--design", choices=DESIGN_CHOICES, default="global-gossip")
     parser.add_argument("--seeds", type=int, default=100, help="number of seeds")

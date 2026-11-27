@@ -21,11 +21,11 @@ python -m experiments.compare_with_legacy --design sampling --seeds 100
 
 No legacy code runs here. Legacy results for seeds 0–99 are stored in
 `data/legacy_<design>.json`, together with the settings and the commit
-they came from. The script refuses
-settings that differ from the recorded ones. To record a different setup,
-run `python -m experiments.record_legacy_baseline` with the same arguments.
-That needs the legacy modules, so after they are deleted, check out the
-recorded commit first.
+they came from. The script refuses settings that differ from the recorded
+ones. The legacy code and its recorder, `experiments/record_legacy_baseline.py`,
+were removed after `0abb0e6`. To record a different setup, check out
+`0abb0e6` and run `python -m experiments.record_legacy_baseline` with the
+same arguments.
 
 Runs are deterministic: the same code and arguments give identical numbers,
 so any change in the table below comes from a code change.
@@ -98,12 +98,12 @@ status record carries its node's full `NodeSpec`.
 | Version | Placement | Delay | 95% CI | Rejected | Messages | KB |
 | --- | --- | --- | --- | --- | --- | --- |
 | Legacy (`distributed.py`, sampling) | per job, no queue | 4.850 | [4.627, 5.073] | 54 | 18,423 | — |
-| _(next commit)_ sampling ported | strict FIFO | 5.014 | [4.783, 5.245] | 6 | 9,664 | 1,827 |
+| `91dfae6` sampling ported | strict FIFO | 5.014 | [4.783, 5.245] | 6 | 9,664 | 1,827 |
 | | backfill | 4.881 | [4.650, 5.111] | 7 | 9,544 | 1,800 |
 
 | Version | Placement | Delay vs legacy | 95% CI | Slower on |
 | --- | --- | --- | --- | --- |
-| _(next commit)_ | strict FIFO | +0.164 s (+3.4%) | [+0.079, +0.249] | 60/100 seeds |
+| `91dfae6` | strict FIFO | +0.164 s (+3.4%) | [+0.079, +0.249] | 60/100 seeds |
 | | backfill | +0.031 s (+0.6%) | [−0.059, +0.121] | 43/100 seeds |
 
 With backfill, delay matches legacy, while messages are roughly halved and
@@ -119,12 +119,12 @@ change any global-gossip number.
 | Version | Placement | Delay | 95% CI | Rejected | Messages | KB |
 | --- | --- | --- | --- | --- | --- | --- |
 | Legacy (`distributed.py`, gossip) | per job, no queue | 4.646 | [4.427, 4.865] | 208 | 12,935 | — |
-| _(next commit)_ first recorded | strict FIFO | 4.820 | [4.571, 5.070] | 24 | 12,788 | 2,966 |
+| `0abb0e6` first recorded | strict FIFO | 4.820 | [4.571, 5.070] | 24 | 12,788 | 2,966 |
 | | backfill | 4.583 | [4.354, 4.813] | 20 | 12,274 | 2,857 |
 
 | Version | Placement | Delay vs legacy | 95% CI | Slower on |
 | --- | --- | --- | --- | --- |
-| _(next commit)_ | strict FIFO | +0.174 s (+3.7%) | [+0.078, +0.269] | 64/100 seeds |
+| `0abb0e6` | strict FIFO | +0.174 s (+3.7%) | [+0.078, +0.269] | 64/100 seeds |
 | | backfill | −0.063 s (−1.4%) | [−0.152, +0.027] | 42/100 seeds |
 
 Ring gossip has been in the new code since `807785d`, but was first
@@ -136,12 +136,12 @@ as fast as legacy, and strict FIFO costs a few percent.
 | Version | Placement | Delay | 95% CI | Rejected | Messages | KB |
 | --- | --- | --- | --- | --- | --- | --- |
 | Legacy (`distributed.py`, periodic) | per job, no queue | 4.649 | [4.425, 4.873] | 154 | 14,879 | — |
-| _(next commit)_ periodic ported | strict FIFO | 4.918 | [4.652, 5.183] | 41 | 15,062 | 3,174 |
+| `0abb0e6` periodic ported | strict FIFO | 4.918 | [4.652, 5.183] | 41 | 15,062 | 3,174 |
 | | backfill | 4.594 | [4.362, 4.827] | 30 | 14,329 | 3,021 |
 
 | Version | Placement | Delay vs legacy | 95% CI | Slower on |
 | --- | --- | --- | --- | --- |
-| _(next commit)_ | strict FIFO | +0.269 s (+5.8%) | [+0.155, +0.382] | 63/100 seeds |
+| `0abb0e6` | strict FIFO | +0.269 s (+5.8%) | [+0.155, +0.382] | 63/100 seeds |
 | | backfill | −0.055 s (−1.2%) | [−0.135, +0.026] | 38/100 seeds |
 
 With backfill, delay matches legacy. Strict FIFO costs more here (about

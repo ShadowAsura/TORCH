@@ -15,7 +15,8 @@ DATA = Path(__file__).resolve().parent / "data"
 def test_matches_the_legacy_generator_exactly():
     """
     Recorded from legacy `experiment.make_workload` in tests/data by
-    tests/data/generate_legacy_data.py.
+    tests/data/generate_legacy_data.py (removed with the legacy code; check
+    out `0abb0e6` to rerun it).
     """
     case = json.loads((DATA / "legacy_workload.json").read_text())["data"]
     workload = poisson_workload(case["seed"], case["jobs_count"], case["arrival_rate"])

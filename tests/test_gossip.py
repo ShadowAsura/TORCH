@@ -43,7 +43,8 @@ LEGACY_LAYOUTS = json.loads(
 def test_ring_with_shortcuts_matches_the_legacy_layout(case):
     """
     Recorded from legacy `distributed.neighborhoods` (index-based) in
-    tests/data by tests/data/generate_legacy_data.py.
+    tests/data by tests/data/generate_legacy_data.py (removed with the
+    legacy code; check out `0abb0e6` to rerun it).
     """
     ids = [f"n{i}" for i in range(case["count"])]
     layout = topology.ring_with_shortcuts(ids, radius=case["radius"], seed=case["seed"])

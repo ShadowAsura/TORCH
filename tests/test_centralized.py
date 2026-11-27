@@ -116,7 +116,8 @@ LEGACY_TIMELINES = json.loads((DATA / "legacy_centralized_timelines.json").read_
 def test_strict_fifo_matches_the_legacy_centralized_baseline(case):
     """
     Same start, finish and node for every job as the legacy `simulate()`,
-    recorded in tests/data by tests/data/generate_legacy_data.py.
+    recorded in tests/data by tests/data/generate_legacy_data.py (removed
+    with the legacy code; check out `0abb0e6` to rerun it).
     """
     specs = cluster(case["l40_nodes"], case["a100_nodes"])
     jobs = workload(case["seed"], case["jobs"], case["arrival_rate"])
