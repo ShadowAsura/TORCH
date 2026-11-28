@@ -1,5 +1,56 @@
 # Experiments
 
+## `sweep.py`
+
+Runs every scheduling design on the same seeded workloads and writes a
+self-contained experiment report. This is the replacement for the legacy
+`experiment.py --policy all`: use it for new measurements, and use
+`compare_with_legacy.py` only when checking against the recorded legacy
+baseline.
+
+```sh
+python -m experiments.sweep --out results/baseline
+python -m experiments.sweep --out results/sweeps --seeds 100 \
+    --sweep max-staleness=0.5,1,3 --sweep interval=0.25,0.5,1 \
+    --sweep sample-size=2,3,4 --sweep radius=1,2,3
+```
+
+The default compares centralized, global gossip, ring gossip, periodic and
+sampling with both strict FIFO and backfill placement. Every case uses the
+same workload for a given seed: centralized jobs enter through the
+coordinator, while peer-to-peer jobs enter round-robin over the workers.
+`--designs`, `--placement`, `--jobs`, `--arrival-rate`, cluster sizes,
+network latency and protocol settings are configurable. Include staleness
+values near or below the push interval if the sweep should exercise expired
+records; values much larger than the interval mostly measure the baseline.
+Independent runs
+use up to four worker processes by default; raise or lower that with
+`--processes`.
+
+Each `--sweep` is one factor at a time: only that parameter changes while
+the rest stay at their baseline values. Parameters apply only where they
+mean something: interval and staleness to gossip/periodic designs, sample
+size to sampling, and radius to ring-topology designs. Repeat `--sweep` for
+several parameters. Values equal to the baseline are not rerun.
+
+The output directory contains:
+
+| File | Contents |
+| --- | --- |
+| `results.json` | full configuration, every per-seed row, summaries and traffic by message type |
+| `rows.csv` | one row per case and seed |
+| `summary.csv` | means and 95% confidence intervals over seeds |
+| `index.html` | report tables with the generated charts |
+| `charts/` | dependency-free SVG bar charts for the baseline, traffic composition, and line charts for sweeps |
+
+Metrics are mean scheduling delay (submission to first start), mean job
+completion time (submission to first completion), makespan (first
+submission to last completion), throughput (completions per makespan
+second), GPU utilization (busy GPU-seconds over capacity GPU-seconds during
+the makespan), rejected reservations, network messages and encoded traffic
+bytes. Percentile columns add p95 delay and completion time. Runs are
+deterministic: the same code and arguments produce the same metrics.
+
 ## `compare_with_legacy.py`
 
 Runs a new design (strict FIFO and backfill placement, ring forwarding) on

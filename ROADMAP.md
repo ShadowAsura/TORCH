@@ -34,6 +34,11 @@
   `experiments/faults.py` to measure what faults cost. Faults are described
   by scenario files (crashes, random crashes, partitions, message loss) that
   run both in the simulator and in the Docker demo.
+- **Experiment runner and parameter sweeps.** `experiments/sweep.py` runs
+  every design on the same seeded workloads, sweeps staleness, interval,
+  sample size and radius one factor at a time, and writes raw rows,
+  seed-level confidence intervals, an HTML report and SVG charts for delay,
+  completion time, utilization, throughput, rejections and traffic.
 
 ## Next
 
@@ -55,18 +60,13 @@
      status report was lost; workers should re-report periodically
    - the sets of finished jobs and seen handoffs grow without bound
    - timeouts (1 s) are fixed and conservative next to a 20 ms network
-3. **An experiment runner and parameter sweeps.** This replaces legacy
-   `experiment.py --policy all`. It would run every design on the same
-   seeded workloads, sweep staleness, interval, sample size and radius, and
-   report delay, completion time, utilization, throughput, rejections and
-   traffic with charts.
-4. **Lower traffic.** `ForwardJob` lapping is about 70% of bytes and full
+3. **Lower traffic.** `ForwardJob` lapping is about 70% of bytes and full
    `NodeSpec`s in status records about 25% (see the experiments README).
-5. **Placement policies from the proposal.** Sia- and Beehive-style
+4. **Placement policies from the proposal.** Sia- and Beehive-style
    heterogeneity-aware placement, behind the `PlacementPolicy` interface.
-6. **Cloud deployment and real GPU work** for the proposal's
+5. **Cloud deployment and real GPU work** for the proposal's
    real-deployment validation. Keep simulated execution as the test
    fixture.
-7. **Course deliverables.** The IEEE report with UML diagrams and
+6. **Course deliverables.** The IEEE report with UML diagrams and
    demonstration snapshots, the recorded presentation and slides, and the
    division of work.
